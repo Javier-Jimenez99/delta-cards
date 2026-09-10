@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "Pokemon Cards Search Config",
+  "description": "Configuration for searching and scraping Pokemon cards and sealed products on Wallapop",
+  "wallapop_settings": {
+    "latitude": 40.4168,
+    "longitude": -3.7038,
+    "location_name": "Madrid, Spain",
+    "order_by": "newest",
+    "delay_between_requests_ms": 1500
+  },
+  "search_profiles": [
+    {
+      "id": "booster_box",
+      "name": "Booster Box / Displays",
+      "product_type": "booster_box",
+      "query": [
+        "pokemon booster box",
+        "pokemon booster box caja",
+        "pokemon box booster",
+        "caja de sobres pokemon",
+        "pokemon display sobres",
+        "caja booster pokemon"
+      ],
+      "keywords": [
+        "precintada",
+        "precintado",
+        "sellada",
+        "sellado",
+        "sin abrir",
+        "sealed"
+      ],
+      "excluded_keywords": [
+        "vacia",
+        "vacio",
+        "abierta",
+        "abierto",
+        "sin sobres",
+        "empty",
+        "codigo",
+        "code",
+        "proxy",
+        "falsa",
+        "fake",
+        "yugioh",
+        "one piece",
+        "magic",
+        "videojuego",
+        "steelbook",
+        "ps4",
+        "ps5",
+        "wii",
+        "switch",
+        "consola"
+      ],
+      "min_price": 70.0,
+      "max_price": null,
+      "max_items": 50
+    },
+    {
+      "id": "booster_pack",
+      "name": "Booster Packs",
+      "product_type": "booster_pack",
+      "query": [
+        "pokemon sobre precintado",
+        "sobres pokemon precintados",
+        "pokemon booster pack",
+        "pack sobres pokemon precintado",
+        "sobres pokemon tcg"
+      ],
+      "keywords": [
+        "precintado",
+        "precintada",
+        "sellado",
+        "sellada",
+        "sin abrir",
+        "sealed"
+      ],
+      "excluded_keywords": [
+        "abierto",
+        "abierta",
+        "pesado",
+        "vacio",
+        "vacia",
+        "lote de cartas",
+        "sin sobre",
+        "codigo",
+        "code",
+        "yugioh",
+        "one piece",
+        "magic",
+        "videojuego",
+        "steelbook",
+        "ps4",
+        "ps5",
+        "wii",
+        "switch",
+        "consola"
+      ],
+      "min_price": 3.0,
+      "max_price": null,
+      "max_items": 50
+    },
+    {
+      "id": "full_deck",
+      "name": "Full Decks / Battle Decks",
+      "product_type": "deck",
+      "query": [
+        "baraja pokemon",
+        "pokemon battle deck",
+        "pokemon deck",
+        "baraja combate pokemon",
+        "baraja tematica pokemon",
+        "baraja de cartas pokemon"
+      ],
+      "keywords": [
+        "precintada",
+        "precintado",
+        "sellada",
+        "sellado",
+        "sin abrir",
+        "sealed",
+        "battle deck",
+        "baraja de combate",
+        "baraja tematica",
+        "baraja temática"
+      ],
+      "excluded_keywords": [
+        "abierta",
+        "abierto",
+        "incompleta",
+        "cartas sueltas",
+        "solo caja",
+        "vacia",
+        "vacio",
+        "yugioh",
+        "yu-gi-oh",
+        "magic",
+        "one piece",
+        "videojuego",
+        "steelbook",
+        "ps4",
+        "ps5",
+        "wii",
+        "switch",
+        "consola"
+      ],
+      "min_price": 10.0,
+      "max_price": null,
+      "max_items": 50
+    },
+    {
+      "id": "single_card",
+      "name": "Single Cards",
+      "product_type": "single_card",
+      "query": [
+        "pokemon carta",
+        "cartas pokemon",
+        "pokemon carta holo",
+        "pokemon tcg carta",
+        "caja de cartas pokemon"
+      ],
+      "keywords": [
+        "carta",
+        "pokemon",
+        "holo",
+        "reverse",
+        "secret",
+        "ultra rare",
+        "psa",
+        "promo",
+        "gx",
+        "vmax",
+        "vstar",
+        "ex"
+      ],
+      "excluded_keywords": [
+        "codigo",
+        "code",
+        "proxy",
+        "falsa",
+        "fake",
+        "yugioh",
+        "one piece",
+        "magic",
+        "videojuego",
+        "steelbook",
+        "ps4",
+        "ps5",
+        "wii",
+        "switch",
+        "consola"
+      ],
+      "min_price": 1.0,
+      "max_price": null,
+      "max_items": 50
+    },
+    {
+      "id": "elite_trainer_box",
+      "name": "Elite Trainer Boxes (ETB)",
+      "product_type": "etb",
+      "query": [
+        "pokemon etb precintada",
+        "pokemon elite trainer box",
+        "etb pokemon",
+        "caja de entrenador elite pokemon"
+      ],
+      "keywords": [
+        "precintada",
+        "precintado",
+        "sellada",
+        "sellado",
+        "sin abrir",
+        "sealed"
+      ],
+      "excluded_keywords": [
+        "vacia",
+        "vacio",
+        "abierta",
+        "abierto",
+        "sin sobres",
+        "solo fundas",
+        "yugioh",
+        "one piece",
+        "magic",
+        "videojuego",
+        "steelbook",
+        "ps4",
+        "ps5",
+        "wii",
+        "switch",
+        "consola"
+      ],
+      "min_price": 35.0,
+      "max_price": null,
+      "max_items": 50
+    }
+  ],
+  "output_settings": {
+    "output_dir": "data/output",
+    "save_json": true,
+    "save_csv": true,
+    "filename_prefix": "pokemon_offers"
+  }
+}

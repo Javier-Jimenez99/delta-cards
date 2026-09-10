@@ -26,3 +26,5 @@ venv/
 # Testing
 .pytest_cache/
 .coverage
+
+data/output/
