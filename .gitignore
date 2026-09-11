@@ -28,9 +28,10 @@ venv/
 .coverage
 
 data/output/
+models/
 data/models/
 *.pt
 *.gguf
 *.onnx
 onnx/
-
+*.db

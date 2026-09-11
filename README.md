@@ -25,10 +25,24 @@ Designed initially for **Pokémon cards**, with support for any card game or pro
 
 Delta Cards is managed with [`uv`](https://github.com/astral-sh/uv).
 
+### ⚡ One-Command Automated Setup
+Run the setup script to install all dependencies, download required AI models (ONNX YOLO detector and local Qwen2.5 GGUF model), configure `.env`, and initialize the database:
+
 ```bash
-# Sync dependencies
-uv sync
+./setup.sh
 ```
+
+Or run via Python directly:
+```bash
+uv sync
+uv run python scripts/setup.py
+```
+
+### System Requirements
+- **Python 3.12+** (handled automatically via `uv`)
+- **Tesseract OCR**:
+  - **Debian / Ubuntu**: `sudo apt-get install -y tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng`
+  - **macOS**: `brew install tesseract tesseract-lang`
 
 ---
 

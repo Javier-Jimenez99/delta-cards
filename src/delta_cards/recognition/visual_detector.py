@@ -24,6 +24,8 @@ def ensure_cardcaptor_onnx_model(model_path: Optional[str] = None) -> str:
         return model_path
 
     candidate_paths = [
+        os.path.join(os.getcwd(), "models", "onnx", "cardcaptor_v3_best.onnx"),
+        os.path.join(os.getcwd(), "models", "cardcaptor_v3_best.onnx"),
         os.path.join(os.getcwd(), "onnx", "cardcaptor_v3_best.onnx"),
         os.path.join(os.getcwd(), "data", "models", "onnx", "cardcaptor_v3_best.onnx"),
         os.path.join(os.getcwd(), "data", "models", "cardcaptor_v3_best.onnx"),
@@ -33,7 +35,7 @@ def ensure_cardcaptor_onnx_model(model_path: Optional[str] = None) -> str:
         if os.path.isfile(p) and os.path.getsize(p) > 10_000_000:
             return p
 
-    dest_dir = os.path.join(os.getcwd(), "onnx")
+    dest_dir = os.path.join(os.getcwd(), "models", "onnx")
     os.makedirs(dest_dir, exist_ok=True)
     dest_path = os.path.join(dest_dir, "cardcaptor_v3_best.onnx")
 

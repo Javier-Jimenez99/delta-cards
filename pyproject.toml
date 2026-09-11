@@ -24,6 +24,7 @@ dependencies = [
     "torchvision",
     "ultralytics>=8.0.0",
     "langdetect>=1.0.9",
+    "onnxruntime>=1.30.0",
 ]
 
 [project.scripts]

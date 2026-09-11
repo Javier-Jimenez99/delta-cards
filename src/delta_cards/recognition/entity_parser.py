@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_REPO_ID = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
 DEFAULT_FILENAME = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
-DEFAULT_MODEL_DIR = os.path.join(os.getcwd(), "data", "models")
+DEFAULT_MODEL_DIR = os.path.join(os.getcwd(), "models")
 
 
 class ExtractedCardMetadata(BaseModel):
@@ -107,6 +107,8 @@ def ensure_model_file(
     # Check common locations
     candidate_paths = [
         os.path.join(model_dir, filename),
+        os.path.join(os.getcwd(), "models", filename),
+        os.path.join(os.getcwd(), "data", "models", filename),
         os.path.expanduser(f"~/.cache/delta_cards/models/{filename}"),
     ]
     for path in candidate_paths:
