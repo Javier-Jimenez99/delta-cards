@@ -52,6 +52,12 @@ def raw_to_offer_listing(
         if isinstance(images, list) and images:
             img = images[0]
 
+    raw_link = str(raw.get("link") or "").strip()
+    if raw_link.startswith("https://wallapop.com/"):
+        raw_link = raw_link.replace("https://wallapop.com/", "https://es.wallapop.com/")
+    elif raw_link.startswith("http://wallapop.com/"):
+        raw_link = raw_link.replace("http://wallapop.com/", "https://es.wallapop.com/")
+
     return OfferListing(
         id=str(raw.get("id")),
         title=str(raw.get("title") or "").strip(),
@@ -61,7 +67,7 @@ def raw_to_offer_listing(
         location=raw.get("location"),
         country=raw.get("state"),
         description=raw.get("description"),
-        link=str(raw.get("link") or ""),
+        link=raw_link,
         image_url=img,
         is_reserved=bool(raw.get("is_reserved", False)),
         shipping_available=raw.get("shipping_available"),

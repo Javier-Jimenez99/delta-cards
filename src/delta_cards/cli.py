@@ -19,6 +19,7 @@ from .wallapop import CardOffersScraper
 
 
 console = Console()
+err_console = Console(stderr=True)
 
 
 def parse_args(args: Optional[list] = None) -> argparse.Namespace:
@@ -92,6 +93,27 @@ def parse_args(args: Optional[list] = None) -> argparse.Namespace:
         action="store_true",
         help="Enrich unassigned card offers in the database with TCGDex & Cardmarket IDs",
     )
+    parser.add_argument(
+        "--no-discord",
+        action="store_true",
+        help="Skip sending Discord alert notifications for scraped deals",
+    )
+    parser.add_argument(
+        "--discord-webhook",
+        type=str,
+        default=None,
+        help="Override Discord webhook URL specified in settings / .env",
+    )
+    parser.add_argument(
+        "--test-discord",
+        action="store_true",
+        help="Send a test deal alert to Discord to verify the webhook connection and exit",
+    )
+    parser.add_argument(
+        "--alert-all-deals",
+        action="store_true",
+        help="Send Discord alerts for all matching deals found in the database, including previously saved ones",
+    )
     return parser.parse_args(args)
 
 
@@ -129,13 +151,13 @@ def main() -> None:
         if alt_path.is_file():
             config_path = alt_path
         else:
-            console.print(f"[bold red]Error:[/] Configuration file not found at '{args.config}'", file=sys.stderr)
+            err_console.print(f"[bold red]Error:[/] Configuration file not found at '{args.config}'")
             sys.exit(1)
 
     try:
         config = load_config(config_path)
     except Exception as exc:
-        console.print(f"[bold red]Error loading config:[/] {exc}", file=sys.stderr)
+        err_console.print(f"[bold red]Error loading config:[/] {exc}")
         sys.exit(1)
 
     # Filter by enabled flag from config
@@ -146,14 +168,14 @@ def main() -> None:
         selected_profiles = set(args.profile)
         config.search_profiles = [p for p in config.search_profiles if p.id in selected_profiles]
         if not config.search_profiles:
-            console.print(f"[bold red]Error:[/] No profiles found matching: {', '.join(args.profile)}", file=sys.stderr)
+            err_console.print(f"[bold red]Error:[/] No profiles found matching: {', '.join(args.profile)}")
             sys.exit(1)
 
     if args.type:
         selected_types = set(args.type)
         config.search_profiles = [p for p in config.search_profiles if p.product_type in selected_types]
         if not config.search_profiles:
-            console.print(f"[bold red]Error:[/] No profiles found matching product type(s): {', '.join(args.type)}", file=sys.stderr)
+            err_console.print(f"[bold red]Error:[/] No profiles found matching product type(s): {', '.join(args.type)}")
             sys.exit(1)
 
     # Apply CLI overrides
@@ -184,8 +206,50 @@ def main() -> None:
             count = enrich_card_offers_in_db(engine=engine)
             console.print(f"[bold green]✓ Successfully matched and updated {count} card offer(s) in the database.[/bold green]")
         except Exception as exc:
-            console.print(f"[bold red]Error updating database offers:[/] {exc}", file=sys.stderr)
+            err_console.print(f"[bold red]Error updating database offers:[/] {exc}")
             sys.exit(1)
+    if args.test_discord:
+        from .alerts import DiscordAlertService
+        from .models import OfferListing
+        from .settings import get_settings
+
+        settings = get_settings()
+        if args.discord_webhook:
+            settings = settings.model_copy(update={"discord_webhook_url": args.discord_webhook})
+
+        webhook_url = settings.discord_webhook_url
+        if not webhook_url:
+            err_console.print(
+                "[bold red]Error:[/] No DISCORD_WEBHOOK_URL found in .env or passed via --discord-webhook.\n"
+                "Please configure DISCORD_WEBHOOK_URL in your .env file or pass --discord-webhook <url>."
+            )
+            sys.exit(1)
+
+        console.print("[bold cyan]Testing Discord Alert Webhook...[/bold cyan]")
+        masked = webhook_url[:35] + "..." if len(webhook_url) > 35 else webhook_url
+        console.print(f"  • Webhook URL: [cyan]{masked}[/cyan]")
+        console.print(f"  • Min saving %: [yellow]{settings.alert_min_saving_percentage}%[/yellow]")
+        console.print(f"  • Min saving €: [yellow]{settings.alert_min_saving_absolute} €[/yellow]")
+        console.print(f"  • Operator: [yellow]{settings.alert_condition_operator}[/yellow]")
+
+        test_offer = OfferListing(
+            id="test_deal_alert",
+            title="Charizard Base Set Holo 4/102 (Test Alert)",
+            price=45.0,
+            product_type="single_card",
+            location="Madrid, Spain",
+            link="https://es.wallapop.com",
+            image_url="https://images.pokemontcg.io/base1/4_hires.png",
+            cardmarket_url="https://www.cardmarket.com/en/Pokemon/Products/Singles/Base-Set/Charizard",
+            cardmarket_low_price=120.0,
+        )
+
+        service = DiscordAlertService(settings=settings)
+        sent_count = service.process_and_alert_offers([test_offer])
+        if sent_count > 0:
+            console.print("[bold green]✓ Test Discord alert sent successfully! Check your Discord channel.[/bold green]")
+        else:
+            console.print("[bold red]✗ Failed to send Discord alert. Check logs or verify that DISCORD_ALERTS_ENABLED=true.[/bold red]")
         return
 
     scraper = CardOffersScraper(config)
@@ -345,30 +409,122 @@ def main() -> None:
                 )
                 deals = s.exec(deals_stmt).all()
                 if deals:
+                    current_offer_ids = {o.id for o in offers}
                     deals_table = Table(
                         title=f"\n🔥 Deals Found (Wallapop < Cardmarket): {len(deals)}",
                         border_style="bold green",
                     )
+                    deals_table.add_column("Status", style="dim", justify="center")
                     deals_table.add_column("Title", style="cyan")
                     deals_table.add_column("Wallapop", justify="right", style="bold green")
                     deals_table.add_column("Min Cardmarket", justify="right", style="yellow")
                     deals_table.add_column("Savings", justify="right", style="bold magenta")
-                    deals_table.add_column("Link", style="dim")
+                    deals_table.add_column("Link", style="cyan", overflow="fold", no_wrap=False)
 
                     for off, pr in deals:
                         diff = (pr.min_price_all or 0.0) - off.price
+                        deal_link = (off.link or "").replace("https://wallapop.com/", "https://es.wallapop.com/")
+                        status_tag = "[bold green]LIVE[/bold green]" if off.id in current_offer_ids else "[dim]SAVED[/dim]"
                         deals_table.add_row(
-                            off.title[:45],
+                            status_tag,
+                            off.title[:42],
                             f"{off.price:.2f} €",
                             f"{pr.min_price_all:.2f} €",
                             f"-{diff:.2f} €",
-                            off.link,
+                            f"[link={deal_link}]{deal_link}[/link]",
                         )
                     console.print(deals_table)
+
+                    console.print("\n[bold green]🔗 Clickable Deal Links:[/bold green]")
+                    for off, pr in deals:
+                        deal_link = (off.link or "").replace("https://wallapop.com/", "https://es.wallapop.com/")
+                        tag = "[bold green][LIVE][/bold green]" if off.id in current_offer_ids else "[dim][PREVIOUSLY SAVED][/dim]"
+                        console.print(f"  • {tag} [bold]{off.title}[/bold] ({off.price:.2f} € vs {pr.min_price_all:.2f} € CM):")
+                        console.print(f"    [cyan underline]{deal_link}[/cyan underline]")
                 else:
                     console.print("\n[dim]No offers found with Wallapop price below Cardmarket minimum.[/dim]")
         except Exception as exc:
             logging.getLogger("delta_cards").debug(f"Error checking deals: {exc}")
+
+    # Dispatch Discord alerts if enabled
+    if not args.no_discord:
+        from .alerts import DiscordAlertService
+        from .settings import get_settings
+
+        app_settings = get_settings()
+        if args.discord_webhook:
+            app_settings = app_settings.model_copy(update={"discord_webhook_url": args.discord_webhook})
+
+        ref_prices = {}
+        db_deals_to_alert = []
+        saved_deals_count = 0
+        if config.output_settings.save_db and not args.no_db:
+            try:
+                from .database import get_engine
+                from .database.models import CardmarketPrice, WallapopOffers
+                from sqlmodel import select, Session, and_
+
+                eng = get_engine(args.db_url)
+                with Session(eng) as s:
+                    for row in s.exec(select(CardmarketPrice)).all():
+                        if row.min_price_all is not None and row.cardmarket_product_id:
+                            ref_prices[row.cardmarket_product_id] = row.min_price_all
+
+                    deals_stmt = (
+                        select(WallapopOffers, CardmarketPrice)
+                        .join(
+                            CardmarketPrice,
+                            and_(
+                                WallapopOffers.cardmarket_product_id == CardmarketPrice.cardmarket_product_id,
+                                WallapopOffers.language == CardmarketPrice.language,
+                            ),
+                        )
+                        .where(WallapopOffers.price < CardmarketPrice.min_price_all)
+                    )
+                    all_deals = s.exec(deals_stmt).all()
+                    current_ids = {o.id for o in offers}
+                    saved_deals_count = sum(1 for off, _ in all_deals if off.id not in current_ids)
+
+                    include_saved = app_settings.debug or args.alert_all_deals
+                    if include_saved:
+                        from .models import OfferListing
+                        for off, pr in all_deals:
+                            deal_item = OfferListing(
+                                id=off.id,
+                                title=off.title,
+                                price=off.price,
+                                currency=off.currency,
+                                product_type=off.product_type,
+                                location=off.location,
+                                country=off.country,
+                                description=off.description,
+                                link=off.link,
+                                image_url=off.image_url,
+                                is_reserved=off.is_reserved,
+                                shipping_available=off.shipping_available,
+                                seller_user_id=off.seller_user_id,
+                                seller_link=off.seller_link,
+                                published_date=off.published_date,
+                                search_profile_id=off.search_profile_id,
+                                cardmarket_product_id=off.cardmarket_product_id,
+                                language=off.language,
+                                cardmarket_low_price=pr.min_price_all,
+                                tcgdex_id=off.tcgdex_id,
+                            )
+                            db_deals_to_alert.append(deal_item)
+            except Exception:
+                pass
+
+        include_saved = app_settings.debug or args.alert_all_deals
+        alert_svc = DiscordAlertService(settings=app_settings)
+        target_offers = db_deals_to_alert if include_saved and db_deals_to_alert else offers
+        alerts_sent = alert_svc.process_and_alert_offers(target_offers, reference_prices=ref_prices)
+        if alerts_sent > 0:
+            mode_desc = "including saved offers [DEBUG=true]" if app_settings.debug else ("all DB deals" if args.alert_all_deals else "live deals")
+            console.print(f"  • [bold green]DISCORD ALERTS:[/] [bold]{alerts_sent}[/bold] alert notification(s) sent ({mode_desc})")
+        elif app_settings.discord_webhook_url and app_settings.discord_alerts_enabled:
+            note = f" ({saved_deals_count} existing saved deals skipped because DEBUG=false)" if saved_deals_count > 0 and not include_saved else ""
+            console.print(f"  • [bold]DISCORD ALERTS:[/] [dim]Checked {len(target_offers)} live offers (0 met alert condition thresholds){note}[/dim]")
 
 
 

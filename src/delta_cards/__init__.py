@@ -19,6 +19,8 @@ from .recognition import (
     process_card_listing,
     resolve_card,
 )
+from .settings import Settings, get_settings
+from .alerts import DiscordAlertService, evaluate_alert_condition, AlertConditionResult
 from .cli import main
 
 __all__ = [
@@ -50,6 +52,11 @@ __all__ = [
     "parse_listing",
     "process_card_listing",
     "resolve_card",
+    "Settings",
+    "get_settings",
+    "DiscordAlertService",
+    "evaluate_alert_condition",
+    "AlertConditionResult",
     "main",
 ]
 

@@ -1,14 +1,10 @@
 """Database connection and session management for delta-cards."""
 
-import os
 from contextlib import contextmanager
 from typing import Generator, Optional
-from dotenv import load_dotenv
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.engine import Engine
-
-# Load environment variables from .env if present
-load_dotenv()
+from ..settings import get_settings
 
 DEFAULT_DATABASE_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/delta_cards"
 
@@ -23,8 +19,8 @@ def normalize_db_url(url: str) -> str:
 
 
 def get_db_url(db_url: Optional[str] = None) -> str:
-    """Resolves database URL from argument, environment, or default."""
-    raw_url = db_url or os.getenv("DATABASE_URL") or DEFAULT_DATABASE_URL
+    """Resolves database URL from argument or centralized application settings."""
+    raw_url = db_url or get_settings().database_url or DEFAULT_DATABASE_URL
     return normalize_db_url(raw_url)
 
 

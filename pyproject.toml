@@ -25,6 +25,7 @@ dependencies = [
     "ultralytics>=8.0.0",
     "langdetect>=1.0.9",
     "onnxruntime>=1.30.0",
+    "pydantic-settings>=2.15.0",
 ]
 
 [project.scripts]
