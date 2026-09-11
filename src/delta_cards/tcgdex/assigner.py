@@ -81,6 +81,8 @@ def assign_tcgdex_to_offers(
                 offer.cardmarket_product_id = match_res.cardmarket_product_id
                 offer.cardmarket_url = match_res.cardmarket_url
                 offer.cardmarket_low_price = match_res.cardmarket_low_price
+                if match_res.card_language:
+                    offer.language = match_res.card_language
                 logger.debug(
                     f"Assigned '{offer.title[:30]}' -> TCGDex: {offer.tcgdex_id}, "
                     f"Cardmarket: {offer.cardmarket_product_id} ({offer.cardmarket_url}) "
@@ -138,12 +140,14 @@ def enrich_card_offers_in_db(
                 )
                 if res.tcgdex_id:
                     db_offer.tcgdex_id = res.tcgdex_id
+                    if res.card_language:
+                        db_offer.language = res.card_language
                     if res.cardmarket_product_id:
                         upsert_cardmarket_product(
                             product_id=res.cardmarket_product_id,
                             cardmarket_url=(
                                 res.cardmarket_url
-                                or f"https://www.cardmarket.com/es/Pokemon/Products?idProduct={res.cardmarket_product_id}"
+                                or f"https://www.cardmarket.com/{res.card_language or 'es'}/Pokemon/Products?idProduct={res.cardmarket_product_id}"
                             ),
                             session=session,
                         )
@@ -151,7 +155,7 @@ def enrich_card_offers_in_db(
                         if getattr(res, "cardmarket_low_price", None) is not None:
                             upsert_cardmarket_price(
                                 product_id=res.cardmarket_product_id,
-                                language=db_offer.language or "es",
+                                language=db_offer.language or res.card_language or "es",
                                 min_price_all=res.cardmarket_low_price,
                                 session=session,
                             )

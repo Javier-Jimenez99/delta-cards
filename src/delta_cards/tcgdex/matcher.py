@@ -46,6 +46,7 @@ class MatchResult:
     tcgdex_id: Optional[str]
     cardmarket_product_id: Optional[str]
     confidence_score: float
+    card_language: str = "es"
     matched_name: Optional[str] = None
     matched_local_id: Optional[str] = None
     matched_set_name: Optional[str] = None
@@ -272,12 +273,15 @@ class TCGDexMatcher:
             self._offer_cache[cache_key] = result
             return result
 
-        # First search in default language (Spanish), fallback to English if needed
-        candidates = self._search_cards(parsed.card_name, language=self.default_language)
-        used_lang = self.default_language
+        # Search in detected card language first, fallback to alternate language
+        primary_lang = parsed.language if parsed.language in ("es", "en") else self.default_language
+        secondary_lang = self.fallback_language if primary_lang == self.default_language else self.default_language
+
+        candidates = self._search_cards(parsed.card_name, language=primary_lang)
+        used_lang = primary_lang
         if not candidates:
-            candidates = self._search_cards(parsed.card_name, language=self.fallback_language)
-            used_lang = self.fallback_language
+            candidates = self._search_cards(parsed.card_name, language=secondary_lang)
+            used_lang = secondary_lang
 
         if not candidates:
             result = MatchResult(
@@ -322,6 +326,7 @@ class TCGDexMatcher:
             tcgdex_id=best_cand.id,
             cardmarket_product_id=cardmarket_id,
             confidence_score=best_score,
+            card_language=used_lang,
             matched_name=getattr(best_cand, "name", None),
             matched_local_id=str(getattr(best_cand, "localId", "")),
             matched_set_name=matched_set,

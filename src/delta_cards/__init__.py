@@ -4,6 +4,21 @@ from .models import SearchConfig, OfferListing, SearchProfile, WallapopSettings,
 from .config_loader import load_config
 from .wallapop import CardSearchClient, CardOffersScraper, WallapopClient, WallapopScraper, run_scraper
 from .tcgdex import TCGDexMatcher, assign_tcgdex_to_offers, enrich_card_offers_in_db, is_card_offer
+from .recognition import (
+    CardNotDetectedError,
+    CardOCRReader,
+    CardRecognitionPipeline,
+    EntityParser,
+    ExtractedCardMetadata,
+    TCGDexResolver,
+    VisualCardDetector,
+    build_cardmarket_url,
+    extract_text,
+    isolate_card,
+    parse_listing,
+    process_card_listing,
+    resolve_card,
+)
 from .cli import main
 
 __all__ = [
@@ -22,6 +37,20 @@ __all__ = [
     "assign_tcgdex_to_offers",
     "enrich_card_offers_in_db",
     "is_card_offer",
+    "CardNotDetectedError",
+    "CardOCRReader",
+    "CardRecognitionPipeline",
+    "EntityParser",
+    "ExtractedCardMetadata",
+    "TCGDexResolver",
+    "VisualCardDetector",
+    "build_cardmarket_url",
+    "extract_text",
+    "isolate_card",
+    "parse_listing",
+    "process_card_listing",
+    "resolve_card",
     "main",
 ]
+
 

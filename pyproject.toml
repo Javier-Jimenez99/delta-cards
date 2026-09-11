@@ -11,10 +11,19 @@ dependencies = [
     "psycopg[binary]>=3.3.5",
     "pydantic>=2.13.5",
     "python-dotenv>=1.2.3",
-    "rich>=15.0.0",
+    "rich>=13.7.0",
     "sqlmodel>=0.0.42",
     "tcgdex-sdk>=2.3.0",
     "wallapy>=0.6.6",
+    "huggingface-hub>=0.20.0",
+    "instructor>=1.0.0",
+    "llama-cpp-python>=0.2.80",
+    "opencv-python-headless>=4.8.0",
+    "pytesseract>=0.3.10",
+    "torch",
+    "torchvision",
+    "ultralytics>=8.0.0",
+    "langdetect>=1.0.9",
 ]
 
 [project.scripts]
@@ -27,4 +36,30 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
 ]
+
+[tool.uv]
+torch-backend = "cpu"
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu" },
+]
+torchvision = [
+    { index = "pytorch-cpu" },
+]
+llama-cpp-python = [
+    { index = "llama-cpp-cpu" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "llama-cpp-cpu"
+url = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
+explicit = true
+

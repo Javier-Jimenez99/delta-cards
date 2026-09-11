@@ -16,6 +16,7 @@ class ParsedCardInfo:
     total_cards_in_set: Optional[str] = None
     set_hints: List[str] = None
     modifier_hints: List[str] = None
+    language: str = "es"
 
     def __post_init__(self):
         if self.set_hints is None:
@@ -176,6 +177,14 @@ def parse_card_title(title: str, description: Optional[str] = None) -> ParsedCar
     if total_in_set:
         set_hints.append(f"total:{total_in_set}")
 
+    from ..recognition.entity_parser import detect_card_language
+
+    card_lang = detect_card_language(
+        ocr_text="",
+        seller_title=raw_title,
+        seller_description=description or "",
+    )
+
     return ParsedCardInfo(
         raw_title=raw_title,
         cleaned_title=cleaned,
@@ -184,4 +193,5 @@ def parse_card_title(title: str, description: Optional[str] = None) -> ParsedCar
         total_cards_in_set=total_in_set,
         set_hints=set_hints,
         modifier_hints=detected_modifiers,
+        language=card_lang,
     )

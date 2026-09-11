@@ -192,7 +192,8 @@
         "consola",
         "gradeada",
         "psa",
-        "grado"
+        "grado",
+        "grading"
       ],
       "min_price": 1.0,
       "max_price": null,

@@ -74,6 +74,18 @@ def upsert_cardmarket_price(
     now = datetime.now(timezone.utc)
 
     def _do_upsert(s: Session) -> CardmarketPrice:
+        # Guarantee parent CardmarketProduct exists
+        prod = s.exec(select(CardmarketProduct).where(CardmarketProduct.id == pid)).first()
+        if not prod:
+            prod = CardmarketProduct(
+                id=pid,
+                cardmarket_url=f"https://www.cardmarket.com/{language}/Pokemon/Products?idProduct={pid}",
+                scraped_at=now,
+                updated_at=now,
+            )
+            s.add(prod)
+            s.flush()
+
         price_rec = s.exec(
             select(CardmarketPrice).where(
                 CardmarketPrice.cardmarket_product_id == pid,

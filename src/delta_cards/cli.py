@@ -256,25 +256,26 @@ def main() -> None:
         if args.scrape_prices and card_offers:
             from .cardmarket import CardmarketScraper
             cm_scraper = CardmarketScraper()
-            unique_pids = list({o.cardmarket_product_id for o in card_offers if o.cardmarket_product_id})
-            if unique_pids:
-                status.update(f"[bold cyan]Scraping Cardmarket prices for {len(unique_pids)} unique card product(s)...[/bold cyan]")
-                for pid in unique_pids:
+            unique_pairs = list({(o.cardmarket_product_id, (o.language or "es").lower()) for o in card_offers if o.cardmarket_product_id})
+            if unique_pairs:
+                status.update(f"[bold cyan]Scraping Cardmarket prices for {len(unique_pairs)} card product(s)...[/bold cyan]")
+                for pid, card_lang in unique_pairs:
                     try:
-                        price_res = asyncio.run(cm_scraper.scrape_product_prices(pid, language="es"))
+                        price_res = asyncio.run(cm_scraper.scrape_product_prices(pid, language=card_lang))
                         if config.output_settings.save_db and not args.no_db:
-                            from .database import upsert_cardmarket_price, get_engine
-                            engine = get_engine(args.db_url)
-                            upsert_cardmarket_price(
-                                product_id=price_res.cardmarket_product_id,
-                                language=price_res.language,
-                                min_price_all=price_res.min_price_all,
-                                min_price_spain=price_res.min_price_spain,
-                                engine=engine,
-                            )
-                        cm_prices_scraped += 1
+                            if price_res.min_price_all is not None or price_res.min_price_spain is not None:
+                                from .database import upsert_cardmarket_price, get_engine
+                                engine = get_engine(args.db_url)
+                                upsert_cardmarket_price(
+                                    product_id=price_res.cardmarket_product_id,
+                                    language=price_res.language,
+                                    min_price_all=price_res.min_price_all,
+                                    min_price_spain=price_res.min_price_spain,
+                                    engine=engine,
+                                )
+                                cm_prices_scraped += 1
                     except Exception as exc:
-                        logging.getLogger("delta_cards").warning(f"Error scraping Cardmarket price for product {pid}: {exc}")
+                        logging.getLogger("delta_cards").warning(f"Error scraping Cardmarket price for product {pid} ({card_lang}): {exc}")
 
     if not offers:
         console.print("\n[yellow]No offers matched the configured search and filter criteria.[/yellow]")
