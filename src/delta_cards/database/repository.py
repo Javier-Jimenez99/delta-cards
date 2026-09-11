@@ -2,14 +2,14 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, List, Optional
 from sqlalchemy import func, case
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
 from ..models import OfferListing
 from .connection import get_engine, get_session, init_db
-from .models import WallapopOffers, CardmarketProduct, CardmarketPrice
+from .models import WallapopOffers, CardmarketProduct, CardmarketPrice, CardmarketOffers
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +125,99 @@ def upsert_cardmarket_price(
         s.commit()
         s.refresh(rec)
         return rec
+
+
+def upsert_cardmarket_offers(
+    offers: List[Any],
+    product_id: Optional[str] = None,
+    engine: Optional[Engine] = None,
+    session: Optional[Session] = None,
+) -> int:
+    """Inserts or updates a list of Cardmarket offer records into the CardmarketOffers table.
+
+    Args:
+        offers: List of CardmarketOffer dataclass/dict objects.
+        product_id: Optional fallback product ID if not set on each offer.
+        engine: Optional database engine.
+        session: Optional existing Session.
+
+    Returns:
+        int: Number of offers saved or updated.
+    """
+    if not offers:
+        return 0
+
+    now = datetime.now(timezone.utc)
+
+    def _do_upsert(s: Session) -> int:
+        count = 0
+        for off in offers:
+            data = off if isinstance(off, dict) else (off.__dict__ if hasattr(off, "__dict__") else {})
+            pid = data.get("product_id") or product_id or data.get("cardmarket_product_id")
+            if not pid:
+                continue
+
+            # Ensure parent CardmarketProduct exists
+            prod = s.exec(select(CardmarketProduct).where(CardmarketProduct.id == str(pid))).first()
+            if not prod:
+                prod = CardmarketProduct(
+                    id=str(pid),
+                    cardmarket_url=data.get("offer_url") or f"https://www.cardmarket.com/es/Pokemon/Products?idProduct={pid}",
+                    scraped_at=now,
+                    updated_at=now,
+                )
+                s.add(prod)
+                s.flush()
+
+            # Unique identifier for the offer
+            oid = str(data.get("id") or f"{pid}_{data.get('seller_name')}_{data.get('price')}_{data.get('condition')}")
+
+            existing = s.exec(select(CardmarketOffers).where(CardmarketOffers.id == oid)).first()
+            if not existing:
+                rec = CardmarketOffers(
+                    id=oid,
+                    cardmarket_product_id=str(pid),
+                    seller_name=data.get("seller_name") or "Unknown",
+                    seller_country=data.get("seller_country"),
+                    seller_type=data.get("seller_type"),
+                    seller_rating=data.get("seller_rating"),
+                    seller_sales_count=data.get("seller_sales_count"),
+                    price=float(data.get("price", 0.0)),
+                    currency=data.get("currency", "EUR"),
+                    condition=data.get("condition"),
+                    language=data.get("language") or "es",
+                    is_foil=bool(data.get("is_foil", False)),
+                    is_signed=bool(data.get("is_signed", False)),
+                    is_playset=bool(data.get("is_playset", False)),
+                    is_first_edition=bool(data.get("is_first_edition", False)),
+                    is_reverse_holo=bool(data.get("is_reverse_holo", False)),
+                    is_altered=bool(data.get("is_altered", False)),
+                    item_count=int(data.get("item_count") or data.get("quantity") or 1),
+                    comment=data.get("comment"),
+                    offer_url=data.get("offer_url"),
+                    scraped_at=now,
+                    updated_at=now,
+                )
+                s.add(rec)
+            else:
+                existing.price = float(data.get("price", existing.price))
+                existing.condition = data.get("condition") or existing.condition
+                existing.language = data.get("language") or existing.language
+                existing.item_count = int(data.get("item_count") or data.get("quantity") or existing.item_count)
+                existing.comment = data.get("comment") or existing.comment
+                existing.updated_at = now
+                s.add(existing)
+            count += 1
+        return count
+
+    if session is not None:
+        return _do_upsert(session)
+
+    eng = engine or get_engine()
+    with Session(eng) as s:
+        c = _do_upsert(s)
+        s.commit()
+        return c
 
 
 def save_offers_to_db(

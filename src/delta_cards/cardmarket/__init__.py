@@ -5,11 +5,15 @@ from .constants import (
     CARDMARKET_LANGUAGE_MAP,
     SPAIN_SELLER_COUNTRY_ID,
 )
+from .proxy_rotator import ProxyRotator
+from .playwright_fetcher import PlaywrightFetcher, PlaywrightFetchError
 from .scraper import (
     CardmarketScraper,
     CardmarketPriceResult,
+    CardmarketOffer,
     build_filtered_url,
     parse_minimum_price,
+    parse_offers,
     resolve_language_id,
 )
 
@@ -19,7 +23,12 @@ __all__ = [
     "SPAIN_SELLER_COUNTRY_ID",
     "CardmarketScraper",
     "CardmarketPriceResult",
+    "CardmarketOffer",
+    "ProxyRotator",
+    "PlaywrightFetcher",
+    "PlaywrightFetchError",
     "build_filtered_url",
     "parse_minimum_price",
+    "parse_offers",
     "resolve_language_id",
 ]

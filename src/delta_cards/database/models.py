@@ -32,6 +32,7 @@ class CardmarketProduct(SQLModel, table=True):
     # Relationships
     prices: List["CardmarketPrice"] = Relationship(back_populates="product")
     offers: List["WallapopOffers"] = Relationship(back_populates="cardmarket_product")
+    specific_offers: List["CardmarketOffers"] = Relationship(back_populates="product")
 
 
 class CardmarketPrice(SQLModel, table=True):
@@ -144,3 +145,49 @@ class WallapopOffers(SQLModel, table=True):
             "viewonly": True,
         }
     )
+
+
+class CardmarketOffers(SQLModel, table=True):
+    """Stores individual Cardmarket seller offers for a product."""
+
+    __tablename__ = "CardmarketOffers"
+
+    id: str = Field(
+        primary_key=True,
+        index=True,
+        description="Cardmarket unique article/offer ID (or synthetic composite id)",
+    )
+    cardmarket_product_id: str = Field(
+        foreign_key="CardmarketProduct.id",
+        index=True,
+        description="Reference to the Cardmarket product ID",
+    )
+    seller_name: str = Field(index=True, description="Username of the seller")
+    seller_country: Optional[str] = Field(default=None, index=True, description="Seller location or country code")
+    seller_type: Optional[str] = Field(default=None, description="Seller type (Private, Professional, Powerseller)")
+    seller_rating: Optional[str] = Field(default=None, description="Seller evaluation rating")
+    seller_sales_count: Optional[int] = Field(default=None, description="Total sales count of the seller")
+    price: float = Field(index=True, description="Price in currency units")
+    currency: str = Field(default="EUR", description="Currency code (e.g. EUR)")
+    condition: Optional[str] = Field(default=None, index=True, description="Condition code (MT, NM, EX, GD, LP, PL, PO)")
+    language: Optional[str] = Field(default="es", index=True, description="Card language code (e.g. es, en, de)")
+    is_foil: bool = Field(default=False, description="Whether the card is foil/holo")
+    is_signed: bool = Field(default=False, description="Whether the card is signed")
+    is_playset: bool = Field(default=False, description="Whether this offer is for a 4x playset")
+    is_first_edition: bool = Field(default=False, description="Whether the card is first edition")
+    is_reverse_holo: bool = Field(default=False, description="Whether the card is reverse holo")
+    is_altered: bool = Field(default=False, description="Whether the card is altered")
+    item_count: int = Field(default=1, description="Available quantity in this offer")
+    comment: Optional[str] = Field(default=None, description="Seller comment or notes on the item")
+    offer_url: Optional[str] = Field(default=None, description="Direct URL to product or article")
+    scraped_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Timestamp when the offer was scraped",
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Timestamp when the offer was last updated",
+    )
+
+    # Relationships
+    product: Optional[CardmarketProduct] = Relationship(back_populates="specific_offers")

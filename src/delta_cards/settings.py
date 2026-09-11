@@ -55,6 +55,32 @@ class Settings(BaseSettings):
         description="If true, send alerts with saved offers. If false, do not send alerts for existing deals.",
     )
 
+    # Cardmarket Scraper Settings (Proxy, TLS Fingerprinting, Playwright)
+    cardmarket_proxies: Optional[str] = Field(
+        default=None,
+        description="Comma-separated list of proxy URLs (e.g. 'http://user:pass@host:port,http://...')",
+    )
+    cardmarket_proxies_file: Optional[str] = Field(
+        default=None,
+        description="Path to text file containing one proxy URL per line",
+    )
+    cardmarket_impersonate: str = Field(
+        default="safari180",
+        description="Default TLS impersonation profile for curl_cffi (e.g. 'safari180', 'safari170', 'chrome124')",
+    )
+    cardmarket_use_playwright_fallback: bool = Field(
+        default=True,
+        description="Whether to simulate a browser with Playwright if curl_cffi encounters Cloudflare challenges",
+    )
+    cardmarket_playwright_headless: bool = Field(
+        default=True,
+        description="Whether Playwright browser runs in headless mode",
+    )
+    cardmarket_playwright_timeout: float = Field(
+        default=30.0,
+        description="Playwright navigation and challenge wait timeout in seconds",
+    )
+
     @field_validator("alert_condition_operator", mode="before")
     @classmethod
     def normalize_operator(cls, v: Optional[str]) -> str:
