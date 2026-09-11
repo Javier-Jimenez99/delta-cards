@@ -44,6 +44,10 @@ class Settings(BaseSettings):
         default="or",
         description="Logical operator when both percentage and absolute conditions are set ('or' / 'and')",
     )
+    alert_wild_offer_emoji: str = Field(
+        default="<:pokeball_light:1548052080357412995>",
+        description="Custom Discord emoji or unicode tag preceding wild offer message (e.g. <:pokeball_light:123456789>)",
+    )
 
     # Debug Mode: Controls alerting on previously saved database offers
     debug: bool = Field(

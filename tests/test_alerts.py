@@ -7,6 +7,7 @@ from delta_cards.alerts import (
     DiscordAlertService,
     build_discord_embed,
     evaluate_alert_condition,
+    format_product_type,
     send_discord_webhook,
 )
 from delta_cards.models import OfferListing
@@ -114,8 +115,21 @@ def test_evaluate_condition_edge_cases():
     assert res.is_triggered is False
 
 
+def test_format_product_type():
+    """Verify translation of raw product type codes into Spanish display labels."""
+    assert format_product_type("single_card") == "Carta"
+    assert format_product_type("card") == "Carta"
+    assert format_product_type("booster_pack") == "Paquete"
+    assert format_product_type("sobre") == "Paquete"
+    assert format_product_type("booster_box") == "Caja"
+    assert format_product_type("box") == "Caja"
+    assert format_product_type("deck") == "Mazo"
+    assert format_product_type("etb") == "Caja (ETB)"
+    assert format_product_type(None) == "Otro"
+
+
 def test_build_discord_embed():
-    """Verify embed formatting for a deal offer."""
+    """Verify embed formatting in the renovated format."""
     offer = OfferListing(
         id="offer_123",
         title="Charizard Base Set Holo 4/102",
@@ -125,6 +139,8 @@ def test_build_discord_embed():
         link="https://es.wallapop.com/item/charizard-123",
         image_url="https://images.wallapop.com/item.jpg",
         cardmarket_url="https://www.cardmarket.com/en/Pokemon/Products/Singles/Base-Set/Charizard",
+        cardmarket_price_spain=220.0,
+        cardmarket_price_all=200.0,
     )
     res = AlertConditionResult(
         is_triggered=True,
@@ -136,13 +152,86 @@ def test_build_discord_embed():
     )
 
     embed = build_discord_embed(offer, res)
-    assert "Charizard" in embed["title"]
+    assert embed["title"] == "Oferta: Charizard Base Set Holo 4/102"
     assert embed["url"] == offer.link
     assert embed["thumbnail"]["url"] == offer.image_url
-    field_names = [f["name"] for f in embed["fields"]]
-    assert any("Wallapop Price" in fn for fn in field_names)
-    assert any("Market Price" in fn for fn in field_names)
-    assert any("Savings" in fn for fn in field_names)
+    assert embed["footer"]["text"] == "Alerta de ofertas Delta Cards"
+
+    fields_dict = {f["name"]: f["value"] for f in embed["fields"]}
+
+    # Wallapop price
+    assert "💶 Wallapop" in fields_dict
+    assert "150.00 €" in fields_dict["💶 Wallapop"]
+
+    # Market Price of first Spanish seller (🇪🇸 ESP)
+    assert "🇪🇸 ESP" in fields_dict
+    assert "220.00 €" in fields_dict["🇪🇸 ESP"]
+
+    # Market price of the global / European lowest seller (🇪🇺 UE)
+    assert "🇪🇺 UE" in fields_dict
+    assert "200.00 €" in fields_dict["🇪🇺 UE"]
+
+    # Savings: strictly positive number in Spanish
+    assert "💰 Ahorro" in fields_dict
+    assert "50.00 €" in fields_dict["💰 Ahorro"]
+    assert "-50.00" not in fields_dict["💰 Ahorro"]
+
+    # Type: translated into Spanish
+    assert "📦 Tipo" in fields_dict
+    assert fields_dict["📦 Tipo"] == "**Carta**"
+
+    # Location in Spanish
+    assert "📍 Ubicación" in fields_dict
+    assert "Madrid, Spain" in fields_dict["📍 Ubicación"]
+
+    # Links in Spanish
+    assert "🔗 Enlaces" in fields_dict
+    links_val = fields_dict["🔗 Enlaces"]
+    assert offer.link in links_val
+    assert offer.cardmarket_url in links_val
+    assert "Oferta en Wallapop" in links_val
+    assert "Producto en Cardmarket" in links_val
+
+
+def test_build_discord_embed_product_id_fallback():
+    """Verify fallback behavior when prices and URLs are missing or product_id fallback is used."""
+    offer = OfferListing(
+        id="offer_456",
+        title="Pikachu Illustrator Promo",
+        price=500.0,
+        product_type="single_card",
+        link="https://es.wallapop.com/item/pikachu-456",
+        cardmarket_product_id="869748",
+    )
+    res = AlertConditionResult(
+        is_triggered=True,
+        savings_absolute=200.0,
+        savings_percentage=28.57,
+        offer_price=500.0,
+        market_price=700.0,
+        reason="Triggered",
+    )
+
+    embed = build_discord_embed(offer, res)
+    assert embed["title"] == "Oferta: Pikachu Illustrator Promo"
+    fields_dict = {f["name"]: f["value"] for f in embed["fields"]}
+
+    # When no Spanish seller is found, 🇪🇸 ESP displays N/A
+    assert "🇪🇸 ESP" in fields_dict
+    assert "N/A" in fields_dict["🇪🇸 ESP"]
+
+    # 🇪🇺 UE displays market_price
+    assert "🇪🇺 UE" in fields_dict
+    assert "700.00 €" in fields_dict["🇪🇺 UE"]
+
+    # Savings is positive
+    assert "200.00 €" in fields_dict["💰 Ahorro"]
+    assert "-200.00" not in fields_dict["💰 Ahorro"]
+
+    # Links row contains auto-generated Cardmarket URL with product ID
+    links_val = fields_dict["🔗 Enlaces"]
+    assert "idProduct=869748" in links_val
+    assert "Oferta en Wallapop" in links_val
 
 
 def test_send_discord_webhook_success():
@@ -162,6 +251,7 @@ def test_send_discord_webhook_success():
         mock_client.post.assert_called_once()
         args, kwargs = mock_client.post.call_args
         assert kwargs["json"]["embeds"] == embeds
+        assert kwargs["json"]["content"] == "<:pokeball_light:1548052080357412995> ¡Ha aparecido una oferta salvaje!"
 
 
 def test_send_discord_webhook_failure_handling():

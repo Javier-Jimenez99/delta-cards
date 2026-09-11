@@ -13,6 +13,9 @@ import pytesseract
 logger = logging.getLogger(__name__)
 
 
+_tesseract_missing_warned = False
+
+
 def _configure_tesseract_binary() -> str:
     """Configures pytesseract binary location, checking local environment and system PATH."""
     candidates = [
@@ -52,7 +55,14 @@ class CardOCRReader:
 
         self.default_psm = default_psm
         self.desired_languages = languages or ["eng", "spa", "jpn"]
+        self._tesseract_available = self._check_tesseract_available()
         self.lang_arg = self._resolve_available_languages()
+
+    def _check_tesseract_available(self) -> bool:
+        cmd = pytesseract.pytesseract.tesseract_cmd
+        if cmd and (shutil.which(cmd) or (os.path.isfile(cmd) and os.access(cmd, os.X_OK))):
+            return True
+        return False
 
     def _resolve_available_languages(self) -> str:
         """Determines which desired languages are installed in Tesseract with graceful fallback."""
@@ -131,6 +141,16 @@ class CardOCRReader:
         if cropped_card is None or cropped_card.size == 0:
             return ""
 
+        if not self._tesseract_available:
+            global _tesseract_missing_warned
+            if not _tesseract_missing_warned:
+                logger.info(
+                    "Tesseract OCR binary not found in PATH. Visual card OCR will be skipped. "
+                    "(Install with 'sudo apt install tesseract-ocr' if local card OCR is desired)."
+                )
+                _tesseract_missing_warned = True
+            return ""
+
         active_psm = psm if psm is not None else self.default_psm
         config = f"--psm {active_psm} -l {self.lang_arg}"
 
@@ -139,7 +159,7 @@ class CardOCRReader:
         try:
             text_pass_1 = pytesseract.image_to_string(binary_img, config=config)
         except Exception as exc:
-            logger.warning(f"Tesseract OCR failed on binary pass: {exc}. Trying fallback.")
+            logger.debug(f"Tesseract OCR failed on binary pass: {exc}. Trying fallback.")
             text_pass_1 = ""
 
         if not use_multi_pass:

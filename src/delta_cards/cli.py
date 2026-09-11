@@ -242,6 +242,8 @@ def main() -> None:
             image_url="https://images.pokemontcg.io/base1/4_hires.png",
             cardmarket_url="https://www.cardmarket.com/en/Pokemon/Products/Singles/Base-Set/Charizard",
             cardmarket_low_price=120.0,
+            cardmarket_price_spain=140.0,
+            cardmarket_price_all=120.0,
         )
 
         service = DiscordAlertService(settings=settings)
@@ -538,8 +540,11 @@ def main() -> None:
                 eng = get_engine(args.db_url)
                 with Session(eng) as s:
                     for row in s.exec(select(CardmarketPrice)).all():
-                        if row.min_price_all is not None and row.cardmarket_product_id:
-                            ref_prices[row.cardmarket_product_id] = row.min_price_all
+                        if row.cardmarket_product_id:
+                            ref_prices[row.cardmarket_product_id] = {
+                                "all": row.min_price_all,
+                                "spain": row.min_price_spain,
+                            }
 
                     deals_stmt = (
                         select(WallapopOffers, CardmarketPrice)
@@ -578,8 +583,15 @@ def main() -> None:
                                 published_date=off.published_date,
                                 search_profile_id=off.search_profile_id,
                                 cardmarket_product_id=off.cardmarket_product_id,
+                                cardmarket_url=(
+                                    f"https://www.cardmarket.com/es/Pokemon/Products?idProduct={off.cardmarket_product_id}"
+                                    if off.cardmarket_product_id
+                                    else None
+                                ),
                                 language=off.language,
                                 cardmarket_low_price=pr.min_price_all,
+                                cardmarket_price_all=pr.min_price_all,
+                                cardmarket_price_spain=pr.min_price_spain,
                                 tcgdex_id=off.tcgdex_id,
                             )
                             db_deals_to_alert.append(deal_item)
