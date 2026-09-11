@@ -7,7 +7,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Any, Dict
 
 from rich.console import Console
 from rich.logging import RichHandler
@@ -272,6 +272,12 @@ def scrape_cardmarket_prices_for_offers(offers: list, engine, args: argparse.Nam
         for pid, card_lang in unique_pairs:
             try:
                 price_res = asyncio.run(cm_scraper.scrape_product_prices(pid, language=card_lang))
+                if getattr(cm_scraper, "_warned_cloudflare", False):
+                    console.print(
+                        "  [yellow]⚠ Cardmarket web requests blocked by Cloudflare (HTTP 403). "
+                        "Skipping direct scraping; using TCGDex reference prices.[/yellow]"
+                    )
+                    break
                 if price_res.min_price_all is not None or price_res.min_price_spain is not None:
                     upsert_cardmarket_price(
                         product_id=price_res.cardmarket_product_id,
