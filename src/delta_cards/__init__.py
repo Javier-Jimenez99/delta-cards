@@ -21,7 +21,7 @@ from .recognition import (
 )
 from .settings import Settings, get_settings
 from .alerts import DiscordAlertService, evaluate_alert_condition, AlertConditionResult
-from .cli import main
+from .cli import main, main_scrape, main_assign
 
 __all__ = [
     "SearchConfig",
@@ -57,4 +57,6 @@ __all__ = [
     "evaluate_alert_condition",
     "AlertConditionResult",
     "main",
+    "main_scrape",
+    "main_assign",
 ]

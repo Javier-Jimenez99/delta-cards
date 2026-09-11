@@ -137,24 +137,43 @@ You can customize searches by editing `config/pokemon_cards_search.json` or prov
 
 ## 💻 CLI Usage
 
-### Run with default configuration:
+Delta Cards provides two decoupled commands that can run independently and concurrently, alongside a unified all-in-one command:
+
+### 1. Scrape Offers (`delta-cards scrape`)
+Fetches listings from Wallapop and stores them in the database and JSON/CSV output files. Fast execution with zero OCR/AI overhead:
+```bash
+# Run a single scrape cycle
+uv run delta-cards scrape -p single_card
+
+# Run scraper in continuous loop mode (e.g. polls every 5 minutes)
+uv run delta-cards scrape --loop --interval 300
+```
+*(Also available as standalone binary: `uv run delta-cards-scrape`)*
+
+### 2. Card Assigner & Deal Hunter (`delta-cards assign`)
+Persistent consumer worker that stays **always on waiting for offers**. It continuously polls the database for new unassigned single cards, passes them through the AI recognition pipeline (YOLOv8 + OCR + LLM fallback), matches official TCGdex/Cardmarket IDs, checks Cardmarket prices, and sends Discord deal alerts:
+```bash
+# Starts the persistent worker (polls DB every 30 seconds by default):
+uv run delta-cards assign --scrape-prices
+
+# Customize polling interval (e.g. check every 15 seconds):
+uv run delta-cards assign --interval 15 --scrape-prices
+
+# Or run just once for the current batch and exit immediately:
+uv run delta-cards assign --once --scrape-prices
+```
+*(Also available as standalone binary: `uv run delta-cards-assign`)*
+
+### 3. Running Scraper and Assigner in Parallel
+Because the Assigner is always on waiting for incoming offers, the Scraper can be triggered at any time (e.g. on demand or via a periodic cron/timer):
+- **Worker (Always On)**: `uv run delta-cards assign --scrape-prices`
+- **Scraper (Triggered on demand or via cron)**: `uv run delta-cards scrape -p single_card`
+
+### 4. Unified All-in-One Pipeline (`delta-cards`)
+Runs the complete sequential flow (scrape -> assign -> scrape prices -> alert deals):
 ```bash
 uv run delta-cards
-```
-
-### Quick test with item limits:
-```bash
-uv run delta-cards --limit 10
-```
-
-### Specify a custom configuration file:
-```bash
-uv run delta-cards --config path/to/my_search.json
-```
-
-### Override output directory or enable verbose logging:
-```bash
-uv run delta-cards --output ./my_data --verbose
+uv run delta-cards --limit 10 --scrape-prices
 ```
 
 ---

@@ -272,13 +272,27 @@ class CardRecognitionPipeline:
                         vc = result["verified_card"]
                         cm = result.get("cardmarket", {}) or {}
                         offer.tcgdex_id = vc.get("id")
-                        offer.cardmarket_product_id = cm.get("idProduct")
-                        offer.cardmarket_url = cm.get("url")
+                        if cm.get("idProduct") and hasattr(offer, "cardmarket_product_id"):
+                            offer.cardmarket_product_id = cm.get("idProduct")
+                        if hasattr(offer, "cardmarket_url"):
+                            try:
+                                offer.cardmarket_url = cm.get("url")
+                            except Exception:
+                                pass
+                        if hasattr(offer, "cardmarket_low_price"):
+                            prices = cm.get("prices", {}) or {}
+                            if prices and prices.get("low") is not None:
+                                try:
+                                    offer.cardmarket_low_price = prices.get("low")
+                                except Exception:
+                                    pass
+                        if cm.get("url"):
+                            object.__setattr__(offer, "_temp_cm_url", cm.get("url"))
                         prices = cm.get("prices", {}) or {}
                         if prices and prices.get("low") is not None:
-                            offer.cardmarket_low_price = prices.get("low")
+                            object.__setattr__(offer, "_temp_cm_low_price", prices.get("low"))
                         meta = result.get("extracted_metadata", {}) or {}
-                        if meta.get("language"):
+                        if meta.get("language") and hasattr(offer, "language"):
                             offer.language = meta["language"]
                 except Exception as exc:
                     logger.warning(f"Pipeline error processing offer {getattr(offer, 'id', '')}: {exc}")

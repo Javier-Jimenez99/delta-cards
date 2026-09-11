@@ -30,6 +30,8 @@ dependencies = [
 
 [project.scripts]
 delta-cards = "delta_cards:main"
+delta-cards-scrape = "delta_cards:main_scrape"
+delta-cards-assign = "delta_cards:main_assign"
 
 [build-system]
 requires = ["uv_build>=0.12.12,<0.13.0"]

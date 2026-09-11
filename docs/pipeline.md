@@ -6,31 +6,42 @@ This document provides a comprehensive technical breakdown of how Delta Cards pr
 
 ## 🏛 High-Level Architecture Overview
 
-Delta Cards follows a decoupled, multi-stage pipeline designed for high accuracy, zero false positives, and maximum throughput:
+Delta Cards follows a decoupled Producer/Consumer architecture designed for high accuracy, zero false positives, and maximum throughput:
+
+- **Producer (`delta-cards scrape`)**: Rapidly fetches listing offers from Wallapop and writes them to the `WallapopOffers` database table (`tcgdex_id = NULL`). Runs purely with I/O and zero AI overhead, finishing in seconds.
+- **Consumer (`delta-cards assign`)**: Always-on persistent background worker. Asynchronously and continuously monitors `WallapopOffers` for new unassigned single cards, passes them through `CardRecognitionPipeline`, matches TCGdex & Cardmarket IDs, queries Cardmarket prices, and sends Discord alerts.
+- **Workflow**:
+  - **Assigner Service (Always On)**: `uv run delta-cards assign --scrape-prices`
+  - **Scraper (Triggered on demand or via cron)**: `uv run delta-cards scrape -p single_card`
 
 ```mermaid
 flowchart TD
-    A[Wallapop Scraper] -->|Raw Offers| B(Caller Filter in cli.py)
-    B -->|Check WallapopOffers DB| C{Already in DB?}
-    C -->|Yes: Matched or Unmatched| D[Skip Assigning - Preserve DB State]
-    C -->|No: Brand New Single Card| E[CardRecognitionPipeline]
-
-    subgraph Pipeline [CardRecognitionPipeline Bounded Concurrency]
-        E --> Pre{Step 0.5: Text Fast-Path in Title/Desc?}
-        Pre -->|Yes: Has Set Fraction| FastTcg[Direct Strategy A Resolution]
-        FastTcg -->|TCGdex Verified| L[Step 4: TCGdex & Cardmarket Resolution]
-        Pre -->|No or Unverified| F[Step 1: Visual Isolation & Perspective Deskew]
-        FastTcg -->|Failed| F
-        F --> G[Step 2: Multi-Pass Adaptive OCR]
-        G --> H{Step 3: OCR Fast-Path Deterministic?}
-        H -->|Yes: Exact Set/Number Match| I[Direct Strategy A Resolution]
-        H -->|No: Unstructured / Ambiguous| J[LLM Extraction Qwen2.5 Mutex Locked]
-        J --> K[Strategy B Cascade Resolver]
-        I --> L
-        K --> L
+    subgraph Producer [Producer: delta-cards scrape]
+        A[Wallapop Scraper] -->|Raw Listings| B[Insert WallapopOffers DB with tcgdex_id=NULL]
     end
 
-    L --> M[Incremental DB Save & Progress Bar Update]
+    subgraph Consumer [Consumer Worker: delta-cards assign]
+        B -.->|Poll WHERE tcgdex_id IS NULL| C[CardRecognitionPipeline Worker]
+        
+        subgraph Pipeline [CardRecognitionPipeline Bounded Concurrency]
+            C --> Pre{Step 0.5: Text Fast-Path in Title/Desc?}
+            Pre -->|Yes: Has Set Fraction| FastTcg[Direct Strategy A Resolution]
+            FastTcg -->|TCGdex Verified| L[Step 4: TCGdex & Cardmarket Resolution]
+            Pre -->|No or Unverified| F[Step 1: Visual Isolation & Perspective Deskew]
+            FastTcg -->|Failed| F
+            F --> G[Step 2: Multi-Pass Adaptive OCR]
+            G --> H{Step 3: OCR Fast-Path Deterministic?}
+            H -->|Yes: Exact Set/Number Match| I[Direct Strategy A Resolution]
+            H -->|No: Unstructured / Ambiguous| J[LLM Extraction Qwen2.5 Mutex Locked]
+            J --> K[Strategy B Cascade Resolver]
+            I --> L
+            K --> L
+        end
+
+        L --> M[Incremental DB Update: tcgdex_id, cardmarket_product_id]
+        M --> N[Scrape Cardmarket Prices & Detect Deals]
+        N --> O[Send Discord Deal Alerts]
+    end
 ```
 
 ---

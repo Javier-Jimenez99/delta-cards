@@ -8,7 +8,7 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
 from ..models import OfferListing
-from .connection import get_engine, get_session
+from .connection import get_engine, get_session, init_db
 from .models import WallapopOffers, CardmarketProduct, CardmarketPrice
 
 logger = logging.getLogger(__name__)
@@ -144,6 +144,7 @@ def save_offers_to_db(
         return 0
 
     eng = engine or get_engine(db_url)
+    init_db(eng)
     now = datetime.now(timezone.utc)
     dialect_name = eng.dialect.name
 
