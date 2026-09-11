@@ -478,18 +478,47 @@ class TCGDexResolver:
     def extract_cardmarket_prices(
         self, raw_card_data: Dict[str, Any]
     ) -> Dict[str, Optional[float]]:
-        """Extracts low, trend, and avg prices from Cardmarket pricing."""
+        """Extracts low, trend, and avg prices from Cardmarket pricing in TCGDex."""
         prices = {"low": None, "trend": None, "avg": None}
         if not raw_card_data:
             return prices
+
+        def _from_dict(cm: dict) -> Dict[str, Optional[float]]:
+            low = cm.get("low") or cm.get("lowPrice")
+            trend = cm.get("trend") or cm.get("trendPrice")
+            avg = cm.get("avg") or cm.get("avgPrice")
+            if avg is None:
+                avg = cm.get("avg-holo") or cm.get("avg30") or cm.get("avg7")
+            if low is None:
+                low = cm.get("low-holo")
+            if trend is None:
+                trend = cm.get("trend-holo")
+            return {
+                "low": float(low) if low is not None else None,
+                "trend": float(trend) if trend is not None else None,
+                "avg": float(avg) if avg is not None else None,
+            }
 
         pricing = raw_card_data.get("pricing")
         if isinstance(pricing, dict):
             cm = pricing.get("cardmarket")
             if isinstance(cm, dict):
-                prices["low"] = cm.get("low") or cm.get("lowPrice")
-                prices["trend"] = cm.get("trend") or cm.get("trendPrice")
-                prices["avg"] = cm.get("avg") or cm.get("avgPrice")
+                p = _from_dict(cm)
+                if p["avg"] is not None or p["low"] is not None or p["trend"] is not None:
+                    return p
+
+        # Fallback: check variants_detailed
+        variants = raw_card_data.get("variants_detailed")
+        if isinstance(variants, list):
+            for variant in variants:
+                if isinstance(variant, dict):
+                    v_pricing = variant.get("pricing")
+                    if isinstance(v_pricing, dict):
+                        v_cm = v_pricing.get("cardmarket")
+                        if isinstance(v_cm, dict):
+                            p = _from_dict(v_cm)
+                            if p["avg"] is not None or p["low"] is not None or p["trend"] is not None:
+                                return p
 
         return prices
 

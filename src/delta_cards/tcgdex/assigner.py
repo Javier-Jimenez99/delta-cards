@@ -41,20 +41,32 @@ def _apply_card_result_to_offer(offer: Any, res: dict) -> None:
             offer.cardmarket_url = cm.get("url")
         except Exception:
             pass
-    if hasattr(offer, "cardmarket_low_price"):
-        prices = cm.get("prices", {}) or {}
-        if prices and prices.get("low") is not None:
-            try:
-                offer.cardmarket_low_price = prices.get("low")
-            except Exception:
-                pass
+    prices = cm.get("prices", {}) or {}
+    if hasattr(offer, "cardmarket_low_price") and prices.get("low") is not None:
+        try:
+            offer.cardmarket_low_price = prices.get("low")
+        except Exception:
+            pass
+    if hasattr(offer, "cardmarket_avg_price") and prices.get("avg") is not None:
+        try:
+            offer.cardmarket_avg_price = prices.get("avg")
+        except Exception:
+            pass
+    if hasattr(offer, "cardmarket_trend_price") and prices.get("trend") is not None:
+        try:
+            offer.cardmarket_trend_price = prices.get("trend")
+        except Exception:
+            pass
 
     # Store temporary attributes for DB models that do not have these columns
     if cm.get("url"):
         object.__setattr__(offer, "_temp_cm_url", cm.get("url"))
-    prices = cm.get("prices", {}) or {}
     if prices and prices.get("low") is not None:
         object.__setattr__(offer, "_temp_cm_low_price", prices.get("low"))
+    if prices and prices.get("avg") is not None:
+        object.__setattr__(offer, "_temp_cm_avg_price", prices.get("avg"))
+    if prices and prices.get("trend") is not None:
+        object.__setattr__(offer, "_temp_cm_trend_price", prices.get("trend"))
 
 
 def assign_tcgdex_to_offers(
@@ -192,11 +204,15 @@ def enrich_card_offers_in_db(
                     session=session,
                 )
                 low_price = getattr(db_offer, "_temp_cm_low_price", None) or getattr(db_offer, "cardmarket_low_price", None)
-                if low_price is not None:
+                avg_price = getattr(db_offer, "_temp_cm_avg_price", None) or getattr(db_offer, "cardmarket_avg_price", None)
+                trend_price = getattr(db_offer, "_temp_cm_trend_price", None) or getattr(db_offer, "cardmarket_trend_price", None)
+                if low_price is not None or avg_price is not None or trend_price is not None:
                     upsert_cardmarket_price(
                         product_id=cm_id,
                         language=db_offer.language or "es",
                         min_price_all=low_price,
+                        avg_price=avg_price,
+                        trend_price=trend_price,
                         session=session,
                     )
             else:

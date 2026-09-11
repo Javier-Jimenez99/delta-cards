@@ -139,8 +139,8 @@ def test_build_discord_embed():
         link="https://es.wallapop.com/item/charizard-123",
         image_url="https://images.wallapop.com/item.jpg",
         cardmarket_url="https://www.cardmarket.com/en/Pokemon/Products/Singles/Base-Set/Charizard",
-        cardmarket_price_spain=220.0,
-        cardmarket_price_all=200.0,
+        cardmarket_avg_price=200.0,
+        cardmarket_low_price=180.0,
     )
     res = AlertConditionResult(
         is_triggered=True,
@@ -159,38 +159,40 @@ def test_build_discord_embed():
 
     fields_dict = {f["name"]: f["value"] for f in embed["fields"]}
 
-    # Wallapop price
-    assert "💶 Wallapop" in fields_dict
-    assert "150.00 €" in fields_dict["💶 Wallapop"]
+    # Row 1: Wallapop, Precio medio, Precio mínimo
+    assert "<:wallapop:1548103689477038080> Wallapop" in fields_dict
+    assert "150.00 €" in fields_dict["<:wallapop:1548103689477038080> Wallapop"]
 
-    # Market Price of first Spanish seller (🇪🇸 ESP)
-    assert "🇪🇸 ESP" in fields_dict
-    assert "220.00 €" in fields_dict["🇪🇸 ESP"]
+    assert "<:cardmarket:1548103777750487056> Precio medio" in fields_dict
+    assert "200.00 €" in fields_dict["<:cardmarket:1548103777750487056> Precio medio"]
 
-    # Market price of the global / European lowest seller (🇪🇺 UE)
-    assert "🇪🇺 UE" in fields_dict
-    assert "200.00 €" in fields_dict["🇪🇺 UE"]
+    assert "<:cardmarket:1548103777750487056> Precio mínimo" in fields_dict
+    assert "180.00 €" in fields_dict["<:cardmarket:1548103777750487056> Precio mínimo"]
 
-    # Savings: strictly positive number in Spanish
+    # Flags and related texts must be removed
+    assert "🇪🇸 ESP" not in fields_dict
+    assert "🇪🇺 UE" not in fields_dict
+
+    # Row 2: Ahorro, Tipo, Ubicación
     assert "💰 Ahorro" in fields_dict
     assert "50.00 €" in fields_dict["💰 Ahorro"]
     assert "-50.00" not in fields_dict["💰 Ahorro"]
 
-    # Type: translated into Spanish
     assert "📦 Tipo" in fields_dict
     assert fields_dict["📦 Tipo"] == "**Carta**"
 
-    # Location in Spanish
     assert "📍 Ubicación" in fields_dict
     assert "Madrid, Spain" in fields_dict["📍 Ubicación"]
 
-    # Links in Spanish
+    # Row 3: Links without individual emotes
     assert "🔗 Enlaces" in fields_dict
     links_val = fields_dict["🔗 Enlaces"]
     assert offer.link in links_val
     assert offer.cardmarket_url in links_val
-    assert "Oferta en Wallapop" in links_val
-    assert "Producto en Cardmarket" in links_val
+    assert "[Oferta en Wallapop]" in links_val
+    assert "[Producto en Cardmarket]" in links_val
+    assert "🛒" not in links_val
+    assert "📈" not in links_val
 
 
 def test_build_discord_embed_product_id_fallback():
@@ -216,22 +218,33 @@ def test_build_discord_embed_product_id_fallback():
     assert embed["title"] == "Oferta: Pikachu Illustrator Promo"
     fields_dict = {f["name"]: f["value"] for f in embed["fields"]}
 
-    # When no Spanish seller is found, 🇪🇸 ESP displays N/A
-    assert "🇪🇸 ESP" in fields_dict
-    assert "N/A" in fields_dict["🇪🇸 ESP"]
+    # Displays market_price fallback under Precio medio
+    assert "<:cardmarket:1548103777750487056> Precio medio" in fields_dict
+    assert "700.00 €" in fields_dict["<:cardmarket:1548103777750487056> Precio medio"]
 
-    # 🇪🇺 UE displays market_price
-    assert "🇪🇺 UE" in fields_dict
-    assert "700.00 €" in fields_dict["🇪🇺 UE"]
+    # Precio mínimo displays N/A when low_price is missing
+    assert "<:cardmarket:1548103777750487056> Precio mínimo" in fields_dict
+    assert "N/A" in fields_dict["<:cardmarket:1548103777750487056> Precio mínimo"]
+
+    # Ubicación displays N/A when location is missing
+    assert "📍 Ubicación" in fields_dict
+    assert "N/A" in fields_dict["📍 Ubicación"]
+
+    # Flags and related texts removed
+    assert "🇪🇸 ESP" not in fields_dict
+    assert "🇪🇺 UE" not in fields_dict
 
     # Savings is positive
     assert "200.00 €" in fields_dict["💰 Ahorro"]
     assert "-200.00" not in fields_dict["💰 Ahorro"]
 
-    # Links row contains auto-generated Cardmarket URL with product ID
+    # Links row contains auto-generated Cardmarket URL with product ID and no emotes in link text
     links_val = fields_dict["🔗 Enlaces"]
     assert "idProduct=869748" in links_val
-    assert "Oferta en Wallapop" in links_val
+    assert "[Oferta en Wallapop]" in links_val
+    assert "[Producto en Cardmarket]" in links_val
+    assert "🛒" not in links_val
+    assert "📈" not in links_val
 
 
 def test_send_discord_webhook_success():

@@ -168,14 +168,15 @@ def build_discord_embed(
     if not cardmarket_url and offer.cardmarket_product_id:
         cardmarket_url = f"https://www.cardmarket.com/es/Pokemon/Products?idProduct={offer.cardmarket_product_id}"
 
-    # Price for first Spanish seller (🇪🇸) and global lowest seller (🌐)
-    price_spain = getattr(offer, "cardmarket_price_spain", None)
-    price_all = getattr(offer, "cardmarket_price_all", None)
-    if price_all is None:
-        price_all = result.market_price if (price_spain is None and result) else getattr(offer, "cardmarket_low_price", None)
+    # Average market price ("Precio medio") from TCGDex
+    avg_price = getattr(offer, "cardmarket_avg_price", None)
+    if avg_price is None:
+        avg_price = result.market_price if result else getattr(offer, "cardmarket_low_price", None)
 
-    spain_str = f"{price_spain:.2f} €" if price_spain is not None else "N/A"
-    all_str = f"{price_all:.2f} €" if price_all is not None else "N/A"
+    low_price = getattr(offer, "cardmarket_low_price", None)
+
+    avg_str = f"{avg_price:.2f} €" if avg_price is not None else "N/A"
+    low_str = f"{low_price:.2f} €" if low_price is not None else "N/A"
 
     # Savings must be positive (e.g. 5.00 €)
     savings_abs = abs(result.savings_absolute)
@@ -188,21 +189,21 @@ def build_discord_embed(
     # Translated product category (Carta, Paquete, Caja, etc.)
     type_label = format_product_type(offer.product_type)
 
+    location_str = offer.location or "N/A"
+
     fields = [
-        {"name": "💶 Wallapop", "value": f"**{offer.price:.2f} €**", "inline": True},
-        {"name": "🇪🇸 ESP", "value": f"**{spain_str}**", "inline": True},
-        {"name": "🇪🇺 UE", "value": f"**{all_str}**", "inline": True},
+        {"name": "<:wallapop:1548103689477038080> Wallapop", "value": f"**{offer.price:.2f} €**", "inline": True},
+        {"name": "<:cardmarket:1548103777750487056> Precio medio", "value": f"**{avg_str}**", "inline": True},
+        {"name": "<:cardmarket:1548103777750487056> Precio mínimo", "value": f"**{low_str}**", "inline": True},
         {"name": "💰 Ahorro", "value": savings_str, "inline": True},
         {"name": "📦 Tipo", "value": f"**{type_label}**", "inline": True},
+        {"name": "📍 Ubicación", "value": f"**{location_str}**", "inline": True},
     ]
 
-    if offer.location:
-        fields.append({"name": "📍 Ubicación", "value": f"**{offer.location}**", "inline": True})
-
     # Enlaces a la oferta en Wallapop y a la página de Cardmarket
-    links = [f"[🛒 Oferta en Wallapop]({wallapop_url})"]
+    links = [f"[Oferta en Wallapop]({wallapop_url})"]
     if cardmarket_url:
-        links.append(f"[📈 Producto en Cardmarket]({cardmarket_url})")
+        links.append(f"[Producto en Cardmarket]({cardmarket_url})")
 
     fields.append({
         "name": "🔗 Enlaces",
@@ -325,32 +326,34 @@ class DiscordAlertService:
             elif reference_prices and offer.cardmarket_product_id in reference_prices:
                 ref_entry = reference_prices[offer.cardmarket_product_id]
 
-            price_all = getattr(offer, "cardmarket_price_all", None)
-            price_spain = getattr(offer, "cardmarket_price_spain", None)
+            avg_price = getattr(offer, "cardmarket_avg_price", None)
+            low_price = getattr(offer, "cardmarket_low_price", None)
 
             if isinstance(ref_entry, dict):
-                if price_all is None:
-                    price_all = ref_entry.get("all")
-                if price_spain is None:
-                    price_spain = ref_entry.get("spain")
+                if avg_price is None:
+                    avg_price = ref_entry.get("avg") or ref_entry.get("all")
+                if low_price is None:
+                    low_price = ref_entry.get("low") or ref_entry.get("all")
             elif isinstance(ref_entry, (int, float)):
-                if price_all is None:
-                    price_all = float(ref_entry)
+                if avg_price is None:
+                    avg_price = float(ref_entry)
 
-            if price_all is None and getattr(offer, "cardmarket_low_price", None) is not None:
-                price_all = offer.cardmarket_low_price
+            if avg_price is None:
+                avg_price = low_price
 
             try:
-                offer.cardmarket_price_all = price_all
-                offer.cardmarket_price_spain = price_spain
+                offer.cardmarket_avg_price = avg_price
+                if low_price is not None:
+                    offer.cardmarket_low_price = low_price
             except Exception:
                 try:
-                    object.__setattr__(offer, "cardmarket_price_all", price_all)
-                    object.__setattr__(offer, "cardmarket_price_spain", price_spain)
+                    object.__setattr__(offer, "cardmarket_avg_price", avg_price)
+                    if low_price is not None:
+                        object.__setattr__(offer, "cardmarket_low_price", low_price)
                 except Exception:
                     pass
 
-            market_price = price_spain if price_spain is not None else price_all
+            market_price = avg_price if avg_price is not None else low_price
             if market_price is None:
                 continue
 

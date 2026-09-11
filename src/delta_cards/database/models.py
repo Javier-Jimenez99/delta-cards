@@ -69,6 +69,14 @@ class CardmarketPrice(SQLModel, table=True):
         default=None,
         description="Minimum price from Spanish sellers (sellerCountry=10) for this language",
     )
+    avg_price: Optional[float] = Field(
+        default=None,
+        description="Average price (Precio medio) from TCGDex",
+    )
+    trend_price: Optional[float] = Field(
+        default=None,
+        description="Trend price from TCGDex",
+    )
     scraped_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         description="Timestamp when the price was first recorded",

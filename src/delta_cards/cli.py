@@ -60,8 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-db", action="store_true", help="Skip saving scraped offers to database")
     parser.add_argument("-p", "--profile", nargs="+", default=None, help="One or more profile IDs to run")
     parser.add_argument("-t", "--type", nargs="+", default=None, help="One or more product types to run")
-    parser.add_argument("--scrape-prices", action="store_true", help="Scrape Cardmarket minimum prices")
-    parser.add_argument("--scrape-offers", action="store_true", help="Scrape and save detailed Cardmarket seller offers")
+    parser.add_argument("--scrape-prices", action="store_true", help="Cardmarket prices are retrieved from TCGDex")
     parser.add_argument("--skip-tcgdex", action="store_true", help="Skip card recognition and assignment")
     parser.add_argument("--assign-existing-cards", action="store_true", help="Enrich unassigned cards in database")
     parser.add_argument("--no-discord", action="store_true", help="Skip sending Discord alert notifications")
@@ -92,8 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run card recognition & assignment pipeline on unassigned DB offers",
     )
     assign_parser.add_argument("-l", "--limit", type=int, default=None, help="Max unassigned cards to process per cycle")
-    assign_parser.add_argument("--scrape-prices", action="store_true", help="Scrape Cardmarket minimum prices for matched cards")
-    assign_parser.add_argument("--scrape-offers", action="store_true", help="Scrape and save detailed Cardmarket seller offers")
+    assign_parser.add_argument("--scrape-prices", action="store_true", help="Cardmarket prices are retrieved from TCGDex")
     assign_parser.add_argument("--no-discord", action="store_true", help="Skip sending Discord alert notifications")
     assign_parser.add_argument("--discord-webhook", type=str, default=None, help="Override Discord webhook URL")
     assign_parser.add_argument("--test-discord", action="store_true", help="Send a test deal alert to Discord and exit")
@@ -113,26 +111,13 @@ def build_parser() -> argparse.ArgumentParser:
     all_parser.add_argument("-p", "--profile", nargs="+", default=None, help="One or more profile IDs to run")
     all_parser.add_argument("-t", "--type", nargs="+", default=None, help="One or more product types to run")
     all_parser.add_argument("--no-db", action="store_true", help="Skip saving scraped offers to database")
-    all_parser.add_argument("--scrape-prices", action="store_true", help="Scrape Cardmarket minimum prices")
-    all_parser.add_argument("--scrape-offers", action="store_true", help="Scrape and save detailed Cardmarket seller offers")
+    all_parser.add_argument("--scrape-prices", action="store_true", help="Cardmarket prices are retrieved from TCGDex")
     all_parser.add_argument("--skip-tcgdex", action="store_true", help="Skip card recognition and assignment")
     all_parser.add_argument("--assign-existing-cards", action="store_true", help="Enrich unassigned cards in database")
     all_parser.add_argument("--no-discord", action="store_true", help="Skip sending Discord alert notifications")
     all_parser.add_argument("--discord-webhook", type=str, default=None, help="Override Discord webhook URL")
     all_parser.add_argument("--test-discord", action="store_true", help="Send a test deal alert to Discord and exit")
     all_parser.add_argument("--alert-all-deals", action="store_true", help="Send Discord alerts for all matching deals")
-
-    # 4. Cardmarket offers inspection subcommand
-    cm_parser = subparsers.add_parser(
-        "cardmarket-offers",
-        parents=[common_parser],
-        help="Scrape and display specific Cardmarket seller offers for a product ID or URL",
-    )
-    cm_parser.add_argument("product_id", type=str, help="Cardmarket product ID (e.g. 483559) or product URL")
-    cm_parser.add_argument("--language", "-L", type=str, default="es", help="Card language code (default: es)")
-    cm_parser.add_argument("--spain-only", action="store_true", help="Only show offers from Spanish sellers")
-    cm_parser.add_argument("-l", "--limit", type=int, default=20, help="Max offers to display (default: 20)")
-    cm_parser.add_argument("--save-db", action="store_true", help="Save scraped offers to database")
 
     return parser
 
@@ -250,8 +235,9 @@ def handle_test_discord(args: argparse.Namespace) -> bool:
         image_url="https://images.pokemontcg.io/base1/4_hires.png",
         cardmarket_url="https://www.cardmarket.com/en/Pokemon/Products/Singles/Base-Set/Charizard",
         cardmarket_low_price=120.0,
+        cardmarket_avg_price=140.0,
         cardmarket_price_spain=140.0,
-        cardmarket_price_all=120.0,
+        cardmarket_price_all=140.0,
     )
 
     service = DiscordAlertService(settings=settings)
@@ -264,62 +250,15 @@ def handle_test_discord(args: argparse.Namespace) -> bool:
 
 
 def scrape_cardmarket_prices_for_offers(offers: list, engine, args: argparse.Namespace, status=None) -> int:
-    """Scrapes Cardmarket minimum prices and optionally specific offers for matched card offers."""
-    scrape_prices_flag = getattr(args, "scrape_prices", False)
-    scrape_offers_flag = getattr(args, "scrape_offers", False)
-    if not (scrape_prices_flag or scrape_offers_flag) or not offers:
-        return 0
-
-    from .cardmarket import CardmarketScraper
-    from .database import upsert_cardmarket_price, upsert_cardmarket_offers
-
-    cm_scraper = CardmarketScraper()
-    unique_pairs = list({
-        (o.cardmarket_product_id, (getattr(o, "language", None) or "es").lower())
-        for o in offers
-        if getattr(o, "cardmarket_product_id", None)
-    })
-    cm_prices_scraped = 0
-    if unique_pairs:
-        msg = f"[bold cyan]Scraping Cardmarket data for {len(unique_pairs)} card product(s)...[/bold cyan]"
-        if status:
-            status.update(msg)
-        else:
-            console.print(msg)
-        for pid, card_lang in unique_pairs:
-            try:
-                price_res = asyncio.run(cm_scraper.scrape_product_prices(pid, language=card_lang))
-                if getattr(cm_scraper, "_warned_cloudflare", False):
-                    console.print(
-                        "  [yellow]⚠ Cardmarket web requests blocked by Cloudflare. "
-                        "Skipping direct scraping; using reference prices.[/yellow]"
-                    )
-                    break
-                if price_res.min_price_all is not None or price_res.min_price_spain is not None:
-                    upsert_cardmarket_price(
-                        product_id=price_res.cardmarket_product_id,
-                        language=price_res.language,
-                        min_price_all=price_res.min_price_all,
-                        min_price_spain=price_res.min_price_spain,
-                        engine=engine,
-                    )
-                    cm_prices_scraped += 1
-
-                if scrape_offers_flag:
-                    offers_res = asyncio.run(cm_scraper.scrape_product_offers(pid, language=card_lang))
-                    if offers_res:
-                        upsert_cardmarket_offers(offers_res, product_id=pid, engine=engine)
-                        logger.info("Saved %d specific Cardmarket offers for product %s", len(offers_res), pid)
-            except Exception as exc:
-                logger.warning(f"Error scraping Cardmarket data for product {pid} ({card_lang}): {exc}")
-    return cm_prices_scraped
+    """Cardmarket prices are retrieved automatically from TCGDex."""
+    return 0
 
 
 def check_and_report_deals(engine, args: argparse.Namespace, live_offer_ids: Optional[List[str]] = None) -> None:
-    """Queries DB for deals where Wallapop price < Cardmarket min price and prints summary table."""
+    """Queries DB for deals where Wallapop price < TCGDex reference price and prints summary table."""
     try:
         from .database.models import WallapopOffers, CardmarketPrice
-        from sqlmodel import select, Session, and_
+        from sqlmodel import select, Session, and_, or_
 
         with Session(engine) as s:
             deals_stmt = (
@@ -332,32 +271,36 @@ def check_and_report_deals(engine, args: argparse.Namespace, live_offer_ids: Opt
                     ),
                 )
                 .where(
-                    WallapopOffers.price < CardmarketPrice.min_price_all
+                    or_(
+                        and_(CardmarketPrice.avg_price.is_not(None), WallapopOffers.price < CardmarketPrice.avg_price),
+                        and_(CardmarketPrice.avg_price.is_(None), CardmarketPrice.min_price_all.is_not(None), WallapopOffers.price < CardmarketPrice.min_price_all),
+                    )
                 )
             )
             deals = s.exec(deals_stmt).all()
             if deals:
                 live_ids = set(live_offer_ids) if live_offer_ids else set()
                 deals_table = Table(
-                    title=f"\n🔥 Deals Found (Wallapop < Cardmarket): {len(deals)}",
+                    title=f"\n🔥 Deals Found (Wallapop < TCGDex Precio Medio): {len(deals)}",
                     border_style="bold green",
                 )
                 deals_table.add_column("Status", style="dim", justify="center")
                 deals_table.add_column("Title", style="cyan")
                 deals_table.add_column("Wallapop", justify="right", style="bold green")
-                deals_table.add_column("Min Cardmarket", justify="right", style="yellow")
+                deals_table.add_column("Precio Medio", justify="right", style="yellow")
                 deals_table.add_column("Savings", justify="right", style="bold magenta")
                 deals_table.add_column("Link", style="cyan", overflow="fold", no_wrap=False)
 
                 for off, pr in deals:
-                    diff = (pr.min_price_all or 0.0) - off.price
+                    ref_p = pr.avg_price if pr.avg_price is not None else pr.min_price_all
+                    diff = (ref_p or 0.0) - off.price
                     deal_link = (off.link or "").replace("https://wallapop.com/", "https://es.wallapop.com/")
                     status_tag = "[bold green]LIVE[/bold green]" if off.id in live_ids else "[dim]SAVED[/dim]"
                     deals_table.add_row(
                         status_tag,
                         off.title[:42],
                         f"{off.price:.2f} €",
-                        f"{pr.min_price_all:.2f} €",
+                        f"{ref_p:.2f} €" if ref_p is not None else "N/A",
                         f"-{diff:.2f} €",
                         f"[link={deal_link}]{deal_link}[/link]",
                     )
@@ -365,12 +308,13 @@ def check_and_report_deals(engine, args: argparse.Namespace, live_offer_ids: Opt
 
                 console.print("\n[bold green]🔗 Clickable Deal Links:[/bold green]")
                 for off, pr in deals:
+                    ref_p = pr.avg_price if pr.avg_price is not None else pr.min_price_all
                     deal_link = (off.link or "").replace("https://wallapop.com/", "https://es.wallapop.com/")
                     tag = "[bold green][LIVE][/bold green]" if off.id in live_ids else "[dim][PREVIOUSLY SAVED][/dim]"
-                    console.print(f"  • {tag} [bold]{off.title}[/bold] ({off.price:.2f} € vs {pr.min_price_all:.2f} € CM):")
+                    console.print(f"  • {tag} [bold]{off.title}[/bold] ({off.price:.2f} € vs {ref_p:.2f} €):")
                     console.print(f"    [cyan underline]{deal_link}[/cyan underline]")
             else:
-                console.print("\n[dim]No offers found with Wallapop price below Cardmarket minimum.[/dim]")
+                console.print("\n[dim]No offers found with Wallapop price below TCGDex reference price.[/dim]")
     except Exception as exc:
         logger.debug(f"Error checking deals: {exc}")
 
@@ -398,10 +342,12 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
             for row in s.exec(select(CardmarketPrice)).all():
                 if row.cardmarket_product_id:
                     ref_prices[row.cardmarket_product_id] = {
-                        "all": row.min_price_all,
-                        "spain": row.min_price_spain,
+                        "avg": row.avg_price,
+                        "low": row.min_price_all,
+                        "all": row.avg_price or row.min_price_all,
                     }
 
+            from sqlmodel import or_
             deals_stmt = (
                 select(WallapopOffers, CardmarketPrice)
                 .join(
@@ -411,7 +357,12 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
                         WallapopOffers.language == CardmarketPrice.language,
                     ),
                 )
-                .where(WallapopOffers.price < CardmarketPrice.min_price_all)
+                .where(
+                    or_(
+                        and_(CardmarketPrice.avg_price.is_not(None), WallapopOffers.price < CardmarketPrice.avg_price),
+                        and_(CardmarketPrice.avg_price.is_(None), CardmarketPrice.min_price_all.is_not(None), WallapopOffers.price < CardmarketPrice.min_price_all),
+                    )
+                )
             )
             all_deals = s.exec(deals_stmt).all()
             current_ids = {o.id for o in (offers or [])}
@@ -446,8 +397,8 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
                         ),
                         language=off.language,
                         cardmarket_low_price=pr.min_price_all,
-                        cardmarket_price_all=pr.min_price_all,
-                        cardmarket_price_spain=pr.min_price_spain,
+                        cardmarket_avg_price=pr.avg_price,
+                        cardmarket_price_all=pr.avg_price or pr.min_price_all,
                         tcgdex_id=off.tcgdex_id,
                     )
                     db_deals_to_alert.append(deal_item)
@@ -460,8 +411,8 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
         if isinstance(item, WallapopOffers):
             cm_prod_id = item.cardmarket_product_id
             pr = ref_prices.get(cm_prod_id, {}) if cm_prod_id else {}
-            low_p = pr.get("all") if isinstance(pr, dict) else getattr(item, "_temp_cm_low_price", None)
-            spain_p = pr.get("spain") if isinstance(pr, dict) else None
+            avg_p = pr.get("avg") if isinstance(pr, dict) else getattr(item, "_temp_cm_avg_price", None)
+            low_p = pr.get("low") or pr.get("all") if isinstance(pr, dict) else getattr(item, "_temp_cm_low_price", None)
             return OfferListing(
                 id=item.id,
                 title=item.title,
@@ -486,8 +437,8 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
                 ),
                 language=item.language,
                 cardmarket_low_price=low_p,
-                cardmarket_price_all=low_p,
-                cardmarket_price_spain=spain_p,
+                cardmarket_avg_price=avg_p,
+                cardmarket_price_all=avg_p or low_p,
                 tcgdex_id=item.tcgdex_id,
                 assigned_state=item.assigned_state or "pending",
             )
@@ -747,8 +698,17 @@ def run_assign(args: argparse.Namespace, config) -> None:
                         )
                         upsert_cardmarket_product(product_id=cm_id, cardmarket_url=cm_url, session=s)
                         low_p = getattr(offer, "_temp_cm_low_price", None) or getattr(offer, "cardmarket_low_price", None)
-                        if low_p is not None:
-                            upsert_cardmarket_price(product_id=cm_id, language=offer.language or "es", min_price_all=low_p, session=s)
+                        avg_p = getattr(offer, "_temp_cm_avg_price", None) or getattr(offer, "cardmarket_avg_price", None)
+                        trend_p = getattr(offer, "_temp_cm_trend_price", None) or getattr(offer, "cardmarket_trend_price", None)
+                        if low_p is not None or avg_p is not None or trend_p is not None:
+                            upsert_cardmarket_price(
+                                product_id=cm_id,
+                                language=offer.language or "es",
+                                min_price_all=low_p,
+                                avg_price=avg_p,
+                                trend_price=trend_p,
+                                session=s,
+                            )
                     s.commit()
             except Exception as exc:
                 logger.debug(f"Error saving incremental match for {offer.id}: {exc}")
@@ -772,12 +732,6 @@ def run_assign(args: argparse.Namespace, config) -> None:
             s.commit()
 
         console.print(f"[bold green]✓ Completed assignment batch: {matched_count[0]}/{len(unassigned_cards)} card(s) matched.[/bold green]")
-
-        if getattr(args, "scrape_prices", False):
-            matched_offers = [o for o in unassigned_cards if getattr(o, "tcgdex_id", None)]
-            cm_count = scrape_cardmarket_prices_for_offers(matched_offers, engine, args)
-            if cm_count > 0:
-                console.print(f"  • [bold]CARDMARKET PRICES:[/bold] [green]{cm_count} price(s) scraped and saved[/green]")
 
         check_and_report_deals(engine, args, live_offer_ids=[o.id for o in unassigned_cards])
         dispatch_discord_alerts(engine, args, offers=unassigned_cards)
@@ -965,13 +919,6 @@ def run_all(args: argparse.Namespace, config) -> None:
                 db_saved_count = save_offers_to_db(offers, db_url=args.db_url)
             except Exception as exc:
                 db_error = str(exc)
-
-        # Scrape Cardmarket prices if requested
-        cm_prices_scraped = 0
-        if getattr(args, "scrape_prices", False) and card_offers:
-            engine = get_engine(args.db_url)
-            cm_prices_scraped = scrape_cardmarket_prices_for_offers(card_offers, engine, args, status=status)
-
     if not offers:
         console.print("\n[yellow]No offers matched the configured search and filter criteria.[/yellow]")
         return
@@ -1007,8 +954,6 @@ def run_all(args: argparse.Namespace, config) -> None:
         console.print(f"  • [bold]{fmt.upper()}:[/bold] [cyan]{pth.resolve()}[/cyan]")
     if not getattr(args, "skip_tcgdex", False) and card_offers:
         console.print(f"  • [bold]TCGDEX / CARDMARKET ENRICHMENT:[/bold] [green]{tcgdex_assigned_count}/{len(card_offers)} card offer(s) identified[/green]")
-    if getattr(args, "scrape_prices", False) and card_offers:
-        console.print(f"  • [bold]CARDMARKET PRICES:[/bold] [green]{cm_prices_scraped} card product price(s) scraped and saved[/green]")
     if db_saved_count is not None:
         console.print(f"  • [bold]DATABASE ('WallapopOffers'):[/bold] [green]{db_saved_count} offer(s) saved/updated[/green]")
     elif db_error:
@@ -1020,83 +965,6 @@ def run_all(args: argparse.Namespace, config) -> None:
         dispatch_discord_alerts(engine, args, offers=offers)
 
 
-def run_cardmarket_offers(args: argparse.Namespace) -> None:
-    """Scrapes and renders individual Cardmarket seller offers for a given product."""
-    from .cardmarket import CardmarketScraper
-    from .database import get_engine, upsert_cardmarket_offers
-
-    cm_scraper = CardmarketScraper()
-    pid = args.product_id
-    lang = getattr(args, "language", "es")
-    spain_only = getattr(args, "spain_only", False)
-    limit = getattr(args, "limit", 20)
-
-    console.print(f"[bold cyan]Fetching Cardmarket offers for product: {pid} (language: {lang}, Spain only: {spain_only})...[/bold cyan]")
-    try:
-        offers = asyncio.run(
-            cm_scraper.scrape_product_offers(
-                product_id_or_url=pid,
-                language=lang,
-                spanish_sellers_only=spain_only,
-                max_offers=limit,
-            )
-        )
-    except Exception as exc:
-        console.print(f"[bold red]Failed to scrape Cardmarket offers: {exc}[/bold red]")
-        return
-
-    if not offers:
-        console.print(f"[yellow]No Cardmarket offers found for product {pid}.[/yellow]")
-        return
-
-    table = Table(
-        title=f"\nCardmarket Offers for Product {pid} ({len(offers)} listings found)",
-        border_style="cyan",
-    )
-    table.add_column("Seller", style="bold white")
-    table.add_column("Country", style="green")
-    table.add_column("Type", style="dim")
-    table.add_column("Cond", justify="center", style="magenta")
-    table.add_column("Lang", justify="center", style="cyan")
-    table.add_column("Attrs", justify="center", style="yellow")
-    table.add_column("Qty", justify="right", style="dim")
-    table.add_column("Price", justify="right", style="bold yellow")
-    table.add_column("Comment", style="italic dim", max_width=30)
-
-    for o in offers:
-        attrs = []
-        if o.is_foil:
-            attrs.append("Foil")
-        if o.is_signed:
-            attrs.append("Signed")
-        if o.is_first_edition:
-            attrs.append("1st")
-        if o.is_playset:
-            attrs.append("Playset")
-        if o.is_reverse_holo:
-            attrs.append("Reverse")
-        attr_str = ", ".join(attrs) if attrs else "-"
-
-        table.add_row(
-            o.seller_name,
-            o.seller_country or "-",
-            o.seller_type or "-",
-            o.condition or "-",
-            (o.language or "-").upper(),
-            attr_str,
-            str(o.item_count),
-            f"{o.price:.2f} €",
-            (o.comment or "")[:30],
-        )
-
-    console.print(table)
-
-    if getattr(args, "save_db", False):
-        engine = get_engine(getattr(args, "db_url", None))
-        saved = upsert_cardmarket_offers(offers, product_id=pid, engine=engine)
-        console.print(f"\n[bold green]✓ Successfully saved {saved} offer(s) to database table 'CardmarketOffers'[/bold green]")
-
-
 def main() -> None:
     args = parse_args()
     setup_logging(args.verbose)
@@ -1106,8 +974,6 @@ def main() -> None:
         run_scrape(args, config)
     elif args.subcommand == "assign":
         run_assign(args, config)
-    elif args.subcommand == "cardmarket-offers":
-        run_cardmarket_offers(args)
     else:
         run_all(args, config)
 

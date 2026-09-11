@@ -71,6 +71,8 @@ def upsert_cardmarket_price(
     language: str,
     min_price_all: Optional[float] = None,
     min_price_spain: Optional[float] = None,
+    avg_price: Optional[float] = None,
+    trend_price: Optional[float] = None,
     engine: Optional[Engine] = None,
     session: Optional[Session] = None,
 ) -> CardmarketPrice:
@@ -103,6 +105,8 @@ def upsert_cardmarket_price(
                 language=language,
                 min_price_all=min_price_all,
                 min_price_spain=min_price_spain,
+                avg_price=avg_price,
+                trend_price=trend_price,
                 scraped_at=now,
                 updated_at=now,
             )
@@ -112,6 +116,10 @@ def upsert_cardmarket_price(
                 price_rec.min_price_all = min_price_all
             if min_price_spain is not None:
                 price_rec.min_price_spain = min_price_spain
+            if avg_price is not None:
+                price_rec.avg_price = avg_price
+            if trend_price is not None:
+                price_rec.trend_price = trend_price
             price_rec.updated_at = now
             s.add(price_rec)
         return price_rec
@@ -258,11 +266,16 @@ def save_offers_to_db(
                     cardmarket_url=url,
                     session=session,
                 )
-                if getattr(o, "cardmarket_low_price", None) is not None:
+                low_p = getattr(o, "cardmarket_low_price", None)
+                avg_p = getattr(o, "cardmarket_avg_price", None)
+                trend_p = getattr(o, "cardmarket_trend_price", None)
+                if low_p is not None or avg_p is not None or trend_p is not None:
                     upsert_cardmarket_price(
                         product_id=o.cardmarket_product_id,
                         language=o.language or "es",
-                        min_price_all=o.cardmarket_low_price,
+                        min_price_all=low_p,
+                        avg_price=avg_p,
+                        trend_price=trend_p,
                         session=session,
                     )
         session.flush()
