@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timezone
 from typing import List, Optional
-from sqlalchemy import func
+from sqlalchemy import func, case
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -21,6 +21,11 @@ def offer_to_db_model(offer: OfferListing, now: Optional[datetime] = None) -> Wa
     data = {k: v for k, v in offer.model_dump().items() if k in valid_fields}
     data["scraped_at"] = now_utc
     data["updated_at"] = now_utc
+    if not data.get("assigned_state") or data["assigned_state"] == "pending":
+        if data.get("cardmarket_product_id"):
+            data["assigned_state"] = "assigned"
+        else:
+            data["assigned_state"] = "pending"
     return WallapopOffers(**data)
 
 
@@ -189,6 +194,11 @@ def save_offers_to_db(
                     "cardmarket_product_id": func.coalesce(stmt.excluded.cardmarket_product_id, WallapopOffers.cardmarket_product_id),
                     "language": func.coalesce(stmt.excluded.language, WallapopOffers.language),
                     "tcgdex_id": func.coalesce(stmt.excluded.tcgdex_id, WallapopOffers.tcgdex_id),
+                    "assigned_state": case(
+                        (stmt.excluded.assigned_state == "assigned", "assigned"),
+                        (WallapopOffers.assigned_state.is_not(None), WallapopOffers.assigned_state),
+                        else_=stmt.excluded.assigned_state,
+                    ),
                     "updated_at": now,
                 },
             )
@@ -216,6 +226,11 @@ def save_offers_to_db(
                     "cardmarket_product_id": func.coalesce(stmt.excluded.cardmarket_product_id, WallapopOffers.cardmarket_product_id),
                     "language": func.coalesce(stmt.excluded.language, WallapopOffers.language),
                     "tcgdex_id": func.coalesce(stmt.excluded.tcgdex_id, WallapopOffers.tcgdex_id),
+                    "assigned_state": case(
+                        (stmt.excluded.assigned_state == "assigned", "assigned"),
+                        (WallapopOffers.assigned_state.is_not(None), WallapopOffers.assigned_state),
+                        else_=stmt.excluded.assigned_state,
+                    ),
                     "updated_at": now,
                 },
             )
@@ -226,6 +241,9 @@ def save_offers_to_db(
         else:
             for offer in offers:
                 item = offer_to_db_model(offer, now=now)
+                existing = session.exec(select(WallapopOffers).where(WallapopOffers.id == item.id)).first()
+                if existing and existing.assigned_state in ("assigned", "not_assigned") and item.assigned_state == "pending":
+                    item.assigned_state = existing.assigned_state
                 session.merge(item)
             session.commit()
             return len(offers)

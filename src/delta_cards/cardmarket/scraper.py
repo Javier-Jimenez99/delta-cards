@@ -214,17 +214,35 @@ class CardmarketScraper:
         min_all: Optional[float] = None
         min_spain: Optional[float] = None
 
+        def _handle_scrape_error(msg: str, exc: Exception) -> None:
+            is_403 = False
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 403:
+                is_403 = True
+            elif "403" in str(exc):
+                is_403 = True
+
+            if is_403:
+                if not getattr(self, "_warned_cloudflare", False):
+                    logger.warning(
+                        "Cardmarket web requests blocked by Cloudflare (HTTP 403). "
+                        "Direct web price scraping skipped; using TCGDex reference prices."
+                    )
+                    self._warned_cloudflare = True
+                logger.debug("%s: %s", msg, exc)
+            else:
+                logger.warning("%s: %s", msg, exc)
+
         try:
             html_all = await self.fetch_html(url_all)
             min_all = parse_minimum_price(html_all)
         except Exception as exc:
-            logger.warning("Failed to fetch overall prices for %s (%s): %s", pid, url_all, exc)
+            _handle_scrape_error(f"Failed to fetch overall prices for {pid} ({url_all})", exc)
 
         try:
             html_spain = await self.fetch_html(url_spain)
             min_spain = parse_minimum_price(html_spain)
         except Exception as exc:
-            logger.warning("Failed to fetch Spanish seller prices for %s (%s): %s", pid, url_spain, exc)
+            _handle_scrape_error(f"Failed to fetch Spanish seller prices for {pid} ({url_spain})", exc)
 
         return CardmarketPriceResult(
             cardmarket_product_id=pid,

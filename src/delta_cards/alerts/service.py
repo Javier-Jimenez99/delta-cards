@@ -169,10 +169,10 @@ def build_discord_embed(
         cardmarket_url = f"https://www.cardmarket.com/es/Pokemon/Products?idProduct={offer.cardmarket_product_id}"
 
     # Price for first Spanish seller (🇪🇸) and global lowest seller (🌐)
-    price_spain = offer.cardmarket_price_spain
-    price_all = offer.cardmarket_price_all
+    price_spain = getattr(offer, "cardmarket_price_spain", None)
+    price_all = getattr(offer, "cardmarket_price_all", None)
     if price_all is None:
-        price_all = result.market_price if (price_spain is None and result) else offer.cardmarket_low_price
+        price_all = result.market_price if (price_spain is None and result) else getattr(offer, "cardmarket_low_price", None)
 
     spain_str = f"{price_spain:.2f} €" if price_spain is not None else "N/A"
     all_str = f"{price_all:.2f} €" if price_all is not None else "N/A"
@@ -325,8 +325,8 @@ class DiscordAlertService:
             elif reference_prices and offer.cardmarket_product_id in reference_prices:
                 ref_entry = reference_prices[offer.cardmarket_product_id]
 
-            price_all = offer.cardmarket_price_all
-            price_spain = offer.cardmarket_price_spain
+            price_all = getattr(offer, "cardmarket_price_all", None)
+            price_spain = getattr(offer, "cardmarket_price_spain", None)
 
             if isinstance(ref_entry, dict):
                 if price_all is None:
@@ -337,11 +337,18 @@ class DiscordAlertService:
                 if price_all is None:
                     price_all = float(ref_entry)
 
-            if price_all is None and offer.cardmarket_low_price is not None:
+            if price_all is None and getattr(offer, "cardmarket_low_price", None) is not None:
                 price_all = offer.cardmarket_low_price
 
-            offer.cardmarket_price_all = price_all
-            offer.cardmarket_price_spain = price_spain
+            try:
+                offer.cardmarket_price_all = price_all
+                offer.cardmarket_price_spain = price_spain
+            except Exception:
+                try:
+                    object.__setattr__(offer, "cardmarket_price_all", price_all)
+                    object.__setattr__(offer, "cardmarket_price_spain", price_spain)
+                except Exception:
+                    pass
 
             market_price = price_spain if price_spain is not None else price_all
             if market_price is None:

@@ -5,6 +5,7 @@ import asyncio
 import logging
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List
 
@@ -14,8 +15,9 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .config_loader import load_config
-from .database import save_offers_to_db, get_engine
+from .database import save_offers_to_db, get_engine, init_db
 from .tcgdex import assign_tcgdex_to_offers, enrich_card_offers_in_db, is_card_offer
+from .models import OfferListing
 from .wallapop import CardOffersScraper
 
 
@@ -423,9 +425,49 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
     except Exception:
         pass
 
+    from .database.models import WallapopOffers
+
+    def _normalize_offer(item: Any) -> OfferListing:
+        if isinstance(item, WallapopOffers):
+            cm_prod_id = item.cardmarket_product_id
+            pr = ref_prices.get(cm_prod_id, {}) if cm_prod_id else {}
+            low_p = pr.get("all") if isinstance(pr, dict) else getattr(item, "_temp_cm_low_price", None)
+            spain_p = pr.get("spain") if isinstance(pr, dict) else None
+            return OfferListing(
+                id=item.id,
+                title=item.title,
+                price=item.price,
+                currency=item.currency,
+                product_type=item.product_type,
+                location=item.location,
+                country=item.country,
+                description=item.description,
+                link=item.link,
+                image_url=item.image_url,
+                is_reserved=item.is_reserved,
+                shipping_available=item.shipping_available,
+                seller_user_id=item.seller_user_id,
+                seller_link=item.seller_link,
+                published_date=item.published_date,
+                search_profile_id=item.search_profile_id,
+                cardmarket_product_id=cm_prod_id,
+                cardmarket_url=(
+                    getattr(item, "_temp_cm_url", None)
+                    or (f"https://www.cardmarket.com/es/Pokemon/Products?idProduct={cm_prod_id}" if cm_prod_id else None)
+                ),
+                language=item.language,
+                cardmarket_low_price=low_p,
+                cardmarket_price_all=low_p,
+                cardmarket_price_spain=spain_p,
+                tcgdex_id=item.tcgdex_id,
+                assigned_state=item.assigned_state or "pending",
+            )
+        return item
+
     include_saved = app_settings.debug or getattr(args, "alert_all_deals", False)
     alert_svc = DiscordAlertService(settings=app_settings)
-    target_offers = db_deals_to_alert if include_saved and db_deals_to_alert else (offers or [])
+    raw_targets = db_deals_to_alert if include_saved and db_deals_to_alert else (offers or [])
+    target_offers = [_normalize_offer(o) for o in raw_targets]
     alerts_sent = alert_svc.process_and_alert_offers(target_offers, reference_prices=ref_prices)
     if alerts_sent > 0:
         mode_desc = "including saved offers [DEBUG=true]" if app_settings.debug else ("all DB deals" if getattr(args, "alert_all_deals", False) else "live deals")
@@ -436,7 +478,7 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
 
 
 def run_scrape(args: argparse.Namespace, config) -> None:
-    """Scrapes Wallapop offers and saves them to DB and disk without running card recognition."""
+    """Scrapes Wallapop offers and saves them to DB incrementally without running card recognition."""
     scraper = CardOffersScraper(config)
 
     console.print(
@@ -453,7 +495,24 @@ def run_scrape(args: argparse.Namespace, config) -> None:
         )
     )
 
+    db_save_enabled = config.output_settings.save_db and not getattr(args, "no_db", False)
+    if db_save_enabled:
+        init_db(get_engine(getattr(args, "db_url", None)))
+
     while True:
+        db_saved_total = 0
+        db_error = None
+
+        def handle_scraped_batch(batch: List[OfferListing]) -> None:
+            nonlocal db_saved_total, db_error
+            if db_save_enabled and batch:
+                try:
+                    saved = save_offers_to_db(batch, db_url=getattr(args, "db_url", None))
+                    db_saved_total += saved
+                except Exception as exc:
+                    db_error = str(exc)
+                    logger.warning(f"Error saving batch to DB: {exc}")
+
         with console.status("[bold cyan]Starting Wallapop scraper...[/bold cyan]", spinner="dots") as status:
             def progress_callback(event: str, data: dict) -> None:
                 if event == "profile_start":
@@ -480,8 +539,9 @@ def run_scrape(args: argparse.Namespace, config) -> None:
                     retrieved = data["retrieved"]
                     kept = data["kept"]
                     badge = f"[green]+{kept} valid[/green]" if kept > 0 else "[dim]0 valid[/dim]"
+                    db_note = " [dim](saved to DB)[/dim]" if (db_save_enabled and kept > 0) else ""
                     console.print(
-                        f"   [dim]•[/dim] [white]'{query}'[/white] [dim]→[/dim] {retrieved} retrieved, {badge}"
+                        f"   [dim]•[/dim] [white]'{query}'[/white] [dim]→[/dim] {retrieved} retrieved, {badge}{db_note}"
                     )
 
                 elif event == "profile_done":
@@ -493,19 +553,15 @@ def run_scrape(args: argparse.Namespace, config) -> None:
                     )
                     status.update("[cyan]Saving scraped data...[/cyan]")
 
-            offers = asyncio.run(scraper.run(progress_callback=progress_callback))
+            offers = asyncio.run(
+                scraper.run(
+                    progress_callback=progress_callback,
+                    on_batch=handle_scraped_batch,
+                )
+            )
 
-            status.update("[bold cyan]Saving scraped data...[/bold cyan]")
+            status.update("[bold cyan]Saving scraped data to files...[/bold cyan]")
             saved_files = scraper.save_results(offers)
-
-            db_saved_count = None
-            db_error = None
-            if config.output_settings.save_db and not getattr(args, "no_db", False) and offers:
-                try:
-                    status.update("[bold cyan]Saving offers to database...[/bold cyan]")
-                    db_saved_count = save_offers_to_db(offers, db_url=getattr(args, "db_url", None))
-                except Exception as exc:
-                    db_error = str(exc)
 
         if not offers:
             console.print("\n[yellow]No offers matched the configured search and filter criteria.[/yellow]")
@@ -539,10 +595,13 @@ def run_scrape(args: argparse.Namespace, config) -> None:
             console.print("\n[bold green]Saved Output Files & Database:[/bold green]")
             for fmt, pth in saved_files.items():
                 console.print(f"  • [bold]{fmt.upper()}:[/bold] [cyan]{pth.resolve()}[/cyan]")
-            if db_saved_count is not None:
-                console.print(f"  • [bold]DATABASE ('WallapopOffers'):[/bold] [green]{db_saved_count} offer(s) saved/updated[/green]")
-            elif db_error:
-                console.print(f"  • [bold yellow]DATABASE ('WallapopOffers'):[/bold yellow] [dim]Skipped ({db_error})[/dim]")
+            if db_save_enabled:
+                if db_saved_total > 0:
+                    console.print(f"  • [bold]DATABASE ('WallapopOffers'):[/bold] [green]{db_saved_total} offer(s) saved incrementally to database[/green]")
+                elif db_error:
+                    console.print(f"  • [bold yellow]DATABASE ('WallapopOffers'):[/bold yellow] [dim]Skipped ({db_error})[/dim]")
+                else:
+                    console.print("  • [bold]DATABASE ('WallapopOffers'):[/bold] [dim]0 new offers to save[/dim]")
 
         if not getattr(args, "loop", False):
             break
@@ -552,7 +611,7 @@ def run_scrape(args: argparse.Namespace, config) -> None:
 
 
 def run_assign(args: argparse.Namespace, config) -> None:
-    """Consumer worker: queries unassigned single cards from DB, runs CardRecognitionPipeline, and checks deals."""
+    """Consumer worker: queries pending offers from DB, runs CardRecognitionPipeline, and checks deals."""
     if handle_test_discord(args):
         return
 
@@ -580,16 +639,11 @@ def run_assign(args: argparse.Namespace, config) -> None:
         )
     )
 
-    attempted_ids = set()
-
     while True:
         with Session(engine) as session:
             stmt = select(WallapopOffers).where(
-                WallapopOffers.product_type == "single_card",
-                WallapopOffers.tcgdex_id.is_(None),
+                WallapopOffers.assigned_state == "pending",
             )
-            if attempted_ids:
-                stmt = stmt.where(WallapopOffers.id.not_in(attempted_ids))
             if getattr(args, "limit", None) is not None:
                 stmt = stmt.limit(args.limit)
             raw_candidates = session.exec(stmt).all()
@@ -600,56 +654,75 @@ def run_assign(args: argparse.Namespace, config) -> None:
                 time.sleep(interval)
                 continue
             else:
-                console.print("[green]✓ No unassigned card offers found in database.[/green]")
+                console.print("[green]✓ No pending card offers found in database.[/green]")
                 break
 
         unassigned_cards = []
+        non_card_offers = []
         for r in raw_candidates:
-            attempted_ids.add(r.id)
             if is_card_offer(r.product_type, title=r.title, description=r.description):
                 unassigned_cards.append(r)
+            else:
+                non_card_offers.append(r)
+
+        # Non-card offers (booster boxes, packs, lots) cannot have cardmarket products assigned
+        if non_card_offers:
+            with Session(engine) as s:
+                for item in non_card_offers:
+                    db_item = s.exec(select(WallapopOffers).where(WallapopOffers.id == item.id)).first()
+                    if db_item:
+                        db_item.assigned_state = "not_assigned"
+                        db_item.updated_at = datetime.now(timezone.utc)
+                        s.add(db_item)
+                s.commit()
+            logger.info(f"Marked {len(non_card_offers)} non-card offer(s) as 'not_assigned'.")
 
         if not unassigned_cards:
             if is_continuous:
-                console.print(f"[dim]No valid unassigned single cards in queue. Waiting {interval}s...[/dim]")
+                console.print(f"[dim]No valid pending single cards in queue. Waiting {interval}s...[/dim]")
                 time.sleep(interval)
                 continue
             else:
-                console.print("[green]✓ No valid unassigned single card offers to process.[/green]")
+                console.print("[green]✓ No valid pending single card offers to process.[/green]")
                 break
 
-        console.print(f"\n[bold cyan]Found {len(unassigned_cards)} unassigned card(s) to process.[/bold cyan]")
+        console.print(f"\n[bold cyan]Found {len(unassigned_cards)} pending card offer(s) to process.[/bold cyan]")
 
         matched_count = [0]
         pbar = tqdm(total=len(unassigned_cards), desc=f"Assigning cards (0/{len(unassigned_cards)} matched)", unit="card")
 
         def on_progress(index, total, offer):
-            if getattr(offer, "tcgdex_id", None):
+            has_cm = bool(getattr(offer, "cardmarket_product_id", None))
+            if has_cm or getattr(offer, "tcgdex_id", None):
                 matched_count[0] += 1
-                try:
-                    with Session(engine) as s:
-                        db_item = s.exec(select(WallapopOffers).where(WallapopOffers.id == offer.id)).first()
-                        if db_item:
+            state = "assigned" if has_cm else "not_assigned"
+            try:
+                with Session(engine) as s:
+                    db_item = s.exec(select(WallapopOffers).where(WallapopOffers.id == offer.id)).first()
+                    if db_item:
+                        db_item.assigned_state = state
+                        db_item.updated_at = datetime.now(timezone.utc)
+                        if getattr(offer, "tcgdex_id", None):
                             db_item.tcgdex_id = offer.tcgdex_id
-                            if getattr(offer, "cardmarket_product_id", None):
-                                db_item.cardmarket_product_id = offer.cardmarket_product_id
-                            if getattr(offer, "language", None):
-                                db_item.language = offer.language
-                            s.add(db_item)
                         if getattr(offer, "cardmarket_product_id", None):
-                            cm_id = offer.cardmarket_product_id
-                            cm_url = (
-                                getattr(offer, "_temp_cm_url", None)
-                                or getattr(offer, "cardmarket_url", None)
-                                or f"https://www.cardmarket.com/{offer.language or 'es'}/Pokemon/Products?idProduct={cm_id}"
-                            )
-                            upsert_cardmarket_product(product_id=cm_id, cardmarket_url=cm_url, session=s)
-                            low_p = getattr(offer, "_temp_cm_low_price", None) or getattr(offer, "cardmarket_low_price", None)
-                            if low_p is not None:
-                                upsert_cardmarket_price(product_id=cm_id, language=offer.language or "es", min_price_all=low_p, session=s)
-                        s.commit()
-                except Exception as exc:
-                    logger.debug(f"Error saving incremental match for {offer.id}: {exc}")
+                            db_item.cardmarket_product_id = offer.cardmarket_product_id
+                        if getattr(offer, "language", None):
+                            db_item.language = offer.language
+                        s.add(db_item)
+                    if getattr(offer, "cardmarket_product_id", None):
+                        cm_id = offer.cardmarket_product_id
+                        cm_url = (
+                            getattr(offer, "_temp_cm_url", None)
+                            or getattr(offer, "cardmarket_url", None)
+                            or f"https://www.cardmarket.com/{offer.language or 'es'}/Pokemon/Products?idProduct={cm_id}"
+                        )
+                        upsert_cardmarket_product(product_id=cm_id, cardmarket_url=cm_url, session=s)
+                        low_p = getattr(offer, "_temp_cm_low_price", None) or getattr(offer, "cardmarket_low_price", None)
+                        if low_p is not None:
+                            upsert_cardmarket_price(product_id=cm_id, language=offer.language or "es", min_price_all=low_p, session=s)
+                    s.commit()
+            except Exception as exc:
+                logger.debug(f"Error saving incremental match for {offer.id}: {exc}")
             pbar.set_description(f"Assigning cards ({matched_count[0]}/{len(unassigned_cards)} matched)")
             pbar.update(1)
 
@@ -658,6 +731,16 @@ def run_assign(args: argparse.Namespace, config) -> None:
         assign_tcgdex_to_offers(unassigned_cards, progress_callback=on_progress, max_concurrency=4)
         logging.getLogger().setLevel(prev_level)
         pbar.close()
+
+        # Reconcile any remaining cards in batch to ensure none stay 'pending'
+        with Session(engine) as s:
+            for o in unassigned_cards:
+                db_item = s.exec(select(WallapopOffers).where(WallapopOffers.id == o.id)).first()
+                if db_item and db_item.assigned_state == "pending":
+                    db_item.assigned_state = "assigned" if getattr(o, "cardmarket_product_id", None) else "not_assigned"
+                    db_item.updated_at = datetime.now(timezone.utc)
+                    s.add(db_item)
+            s.commit()
 
         console.print(f"[bold green]✓ Completed assignment batch: {matched_count[0]}/{len(unassigned_cards)} card(s) matched.[/bold green]")
 
@@ -706,6 +789,17 @@ def run_all(args: argparse.Namespace, config) -> None:
 
     scraper = CardOffersScraper(config)
 
+    db_save_enabled = config.output_settings.save_db and not getattr(args, "no_db", False)
+    if db_save_enabled:
+        init_db(get_engine(args.db_url))
+
+    def handle_scraped_batch(batch: List[OfferListing]) -> None:
+        if db_save_enabled and batch:
+            try:
+                save_offers_to_db(batch, db_url=args.db_url)
+            except Exception as exc:
+                logger.warning(f"Error saving batch to DB: {exc}")
+
     with console.status("[bold cyan]Starting scraper...[/bold cyan]", spinner="dots") as status:
         def progress_callback(event: str, data: dict) -> None:
             if event == "profile_start":
@@ -732,8 +826,9 @@ def run_all(args: argparse.Namespace, config) -> None:
                 retrieved = data["retrieved"]
                 kept = data["kept"]
                 badge = f"[green]+{kept} valid[/green]" if kept > 0 else "[dim]0 valid[/dim]"
+                db_note = " [dim](saved to DB)[/dim]" if (db_save_enabled and kept > 0) else ""
                 console.print(
-                    f"   [dim]•[/dim] [white]'{query}'[/white] [dim]→[/dim] {retrieved} retrieved, {badge}"
+                    f"   [dim]•[/dim] [white]'{query}'[/white] [dim]→[/dim] {retrieved} retrieved, {badge}{db_note}"
                 )
 
             elif event == "profile_done":
@@ -745,7 +840,12 @@ def run_all(args: argparse.Namespace, config) -> None:
                 )
                 status.update("[cyan]Proceeding to next step...[/cyan]")
 
-        offers = asyncio.run(scraper.run(progress_callback=progress_callback))
+        offers = asyncio.run(
+            scraper.run(
+                progress_callback=progress_callback,
+                on_batch=handle_scraped_batch,
+            )
+        )
 
         card_offers = [o for o in offers if o.product_type == "single_card"]
         tcgdex_assigned_count = 0
@@ -803,8 +903,11 @@ def run_all(args: argparse.Namespace, config) -> None:
                 pbar = tqdm(total=len(new_card_offers), desc=f"Assigning new cards (0/{len(new_card_offers)} matched)", unit="card")
 
                 def assignment_progress(index, total, offer):
-                    if getattr(offer, "tcgdex_id", None):
+                    if getattr(offer, "cardmarket_product_id", None):
+                        offer.assigned_state = "assigned"
                         matched[0] += 1
+                    else:
+                        offer.assigned_state = "not_assigned"
                     pbar.set_description(f"Assigning new cards ({matched[0]}/{len(new_card_offers)} matched)")
                     pbar.update(1)
                     if config.output_settings.save_db and not getattr(args, "no_db", False):

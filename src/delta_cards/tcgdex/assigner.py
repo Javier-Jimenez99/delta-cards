@@ -150,8 +150,7 @@ def enrich_card_offers_in_db(
 
     with Session(eng) as session:
         statement = select(WallapopOffers).where(
-            WallapopOffers.product_type == "single_card",
-            WallapopOffers.tcgdex_id.is_(None),  # type: ignore
+            WallapopOffers.assigned_state == "pending",
         )
         if limit is not None:
             statement = statement.limit(limit)
@@ -161,11 +160,16 @@ def enrich_card_offers_in_db(
             logger.info("No unassigned card offers found in database.")
             return 0
 
-        valid_db_offers = [
-            db_o for db_o in offers_to_enrich
-            if is_card_offer(db_o.product_type, title=db_o.title, description=db_o.description)
-        ]
+        valid_db_offers = []
+        for db_o in offers_to_enrich:
+            if is_card_offer(db_o.product_type, title=db_o.title, description=db_o.description):
+                valid_db_offers.append(db_o)
+            else:
+                db_o.assigned_state = "not_assigned"
+                session.add(db_o)
+
         if not valid_db_offers:
+            session.commit()
             return 0
 
         # Execute recognition through the assigner pipeline
@@ -173,29 +177,31 @@ def enrich_card_offers_in_db(
 
         updated_count = 0
         for db_offer in valid_db_offers:
-            if db_offer.tcgdex_id:
+            if db_offer.cardmarket_product_id:
                 updated_count += 1
-                if db_offer.cardmarket_product_id:
-                    cm_id = db_offer.cardmarket_product_id
-                    cm_url = (
-                        getattr(db_offer, "_temp_cm_url", None)
-                        or getattr(db_offer, "cardmarket_url", None)
-                        or f"https://www.cardmarket.com/{db_offer.language or 'es'}/Pokemon/Products?idProduct={cm_id}"
-                    )
-                    upsert_cardmarket_product(
+                db_offer.assigned_state = "assigned"
+                cm_id = db_offer.cardmarket_product_id
+                cm_url = (
+                    getattr(db_offer, "_temp_cm_url", None)
+                    or getattr(db_offer, "cardmarket_url", None)
+                    or f"https://www.cardmarket.com/{db_offer.language or 'es'}/Pokemon/Products?idProduct={cm_id}"
+                )
+                upsert_cardmarket_product(
+                    product_id=cm_id,
+                    cardmarket_url=cm_url,
+                    session=session,
+                )
+                low_price = getattr(db_offer, "_temp_cm_low_price", None) or getattr(db_offer, "cardmarket_low_price", None)
+                if low_price is not None:
+                    upsert_cardmarket_price(
                         product_id=cm_id,
-                        cardmarket_url=cm_url,
+                        language=db_offer.language or "es",
+                        min_price_all=low_price,
                         session=session,
                     )
-                    low_price = getattr(db_offer, "_temp_cm_low_price", None) or getattr(db_offer, "cardmarket_low_price", None)
-                    if low_price is not None:
-                        upsert_cardmarket_price(
-                            product_id=cm_id,
-                            language=db_offer.language or "es",
-                            min_price_all=low_price,
-                            session=session,
-                        )
-                session.add(db_offer)
+            else:
+                db_offer.assigned_state = "not_assigned"
+            session.add(db_offer)
 
         session.commit()
         return updated_count

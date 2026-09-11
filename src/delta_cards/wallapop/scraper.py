@@ -93,12 +93,14 @@ class CardOffersScraper:
         self,
         progress_callback: Optional[Any] = None,
         on_offer: Optional[Any] = None,
+        on_batch: Optional[Any] = None,
     ) -> List[OfferListing]:
         """Runs the search pipeline across all configured profiles.
 
         Args:
             progress_callback: Optional callable(event_name: str, data: dict) for UI progress.
             on_offer: Optional callable(offer: OfferListing) called as each valid unique offer is found.
+            on_batch: Optional callable(offers: List[OfferListing]) called with newly found valid offers after each query.
         """
         all_offers: Dict[str, OfferListing] = {}
         total_profiles = len(self.config.search_profiles)
@@ -156,6 +158,7 @@ class CardOffersScraper:
                 )
                 profile_total_retrieved += len(raw_items)
                 query_new_valid = 0
+                query_new_offers: List[OfferListing] = []
 
                 for item in raw_items:
                     item_id = str(item.get("id"))
@@ -175,11 +178,18 @@ class CardOffersScraper:
                     all_offers[item_id] = offer
                     profile_new_valid += 1
                     query_new_valid += 1
+                    query_new_offers.append(offer)
                     if on_offer:
                         try:
                             on_offer(offer)
                         except Exception as exc:
                             logger.debug(f"Error in on_offer callback for {item_id}: {exc}")
+
+                if on_batch and query_new_offers:
+                    try:
+                        on_batch(query_new_offers)
+                    except Exception as exc:
+                        logger.warning(f"Error in on_batch callback for query '{q}': {exc}")
 
                 if progress_callback:
                     progress_callback(

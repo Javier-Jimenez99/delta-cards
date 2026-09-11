@@ -122,6 +122,11 @@ class WallapopOffers(SQLModel, table=True):
     tcgdex_id: Optional[str] = Field(
         default=None, index=True, description="TCGDex card/product ID"
     )
+    assigned_state: str = Field(
+        default="pending",
+        index=True,
+        description="Cardmarket assignment state: 'pending', 'assigned', 'not_assigned'",
+    )
     scraped_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         description="Timestamp when the offer was first scraped",

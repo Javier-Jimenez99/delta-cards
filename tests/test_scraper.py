@@ -227,3 +227,55 @@ async def test_scraper_run_with_progress_callback(monkeypatch):
     assert "query_done" in event_names
     assert "profile_done" in event_names
 
+
+@pytest.mark.anyio
+async def test_scraper_run_with_incremental_on_batch(monkeypatch):
+    from delta_cards.models import SearchConfig, WallapopSettings, OutputSettings
+    from delta_cards.wallapop.scraper import CardOffersScraper
+
+    config = SearchConfig(
+        name="Test Scraper",
+        wallapop_settings=WallapopSettings(delay_between_requests_ms=0),
+        output_settings=OutputSettings(output_dir="tmp/test"),
+        search_profiles=[
+            SearchProfile(
+                id="test_profile",
+                name="Test Profile",
+                product_type="single_card",
+                query=["query 1", "query 2"],
+                keywords=["carta"],
+                min_price=1.0,
+            )
+        ],
+    )
+
+    scraper = CardOffersScraper(config)
+
+    async def mock_search_offers(product_name, *args, **kwargs):
+        if product_name == "query 1":
+            return [
+                {"id": "card_q1_1", "title": "Carta Pikachu", "price": 10.0, "currency": "EUR", "link": "https://wallapop.com/1"},
+                {"id": "card_q1_2", "title": "Carta Mew", "price": 20.0, "currency": "EUR", "link": "https://wallapop.com/2"},
+            ]
+        return [
+            {"id": "card_q2_1", "title": "Carta Charizard", "price": 50.0, "currency": "EUR", "link": "https://wallapop.com/3"},
+        ]
+
+    monkeypatch.setattr(scraper.client, "search_offers", mock_search_offers)
+
+    batches_received = []
+
+    def on_batch(batch):
+        batches_received.append(batch)
+
+    offers = await scraper.run(on_batch=on_batch)
+
+    # 2 queries executed -> 2 batches emitted
+    assert len(batches_received) == 2
+    assert len(batches_received[0]) == 2
+    assert batches_received[0][0].id == "card_q1_1"
+    assert batches_received[0][1].id == "card_q1_2"
+    assert len(batches_received[1]) == 1
+    assert batches_received[1][0].id == "card_q2_1"
+    assert len(offers) == 3
+
