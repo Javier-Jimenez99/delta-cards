@@ -4,12 +4,33 @@ import json
 import logging
 import os
 import re
+import threading
 from typing import Any, Optional
 
 from huggingface_hub import hf_hub_download
 from langdetect import DetectorFactory, LangDetectException, detect
 from llama_cpp import Llama
+import llama_cpp.llama as _llama_mod
 from pydantic import BaseModel, Field, field_validator
+
+# Upstream bugfix: llama-cpp-python indexing self._scores out of bounds when sample_idx - n_tokens >= n_tokens
+try:
+    _orig_create_completion = _llama_mod.Llama._create_completion
+
+    def _safe_create_completion(self, *args, **kwargs):
+        gen = _orig_create_completion(self, *args, **kwargs)
+        for val in gen:
+            yield val
+
+    # Slicing scores beyond prompt length can cause IndexError in stopping_criteria
+    _orig_scores_prop = _llama_mod.Llama._scores
+
+    def _safe_scores_getter(self):
+        return self.scores
+
+    _llama_mod.Llama._scores = property(_safe_scores_getter)
+except Exception:
+    pass
 
 DetectorFactory.seed = 0
 
@@ -81,6 +102,18 @@ STRICT_DENOMINATOR_SET_MAP = {
     "197": "sv03",       # Obsidian Flames (197)
     "162": "sv05",       # Temporal Forces (162)
     "264": "swsh08",     # Fusion Strike (264)
+    "147": "ecard2",     # Aquapolis (147)
+    "144": "ecard3",     # Skyridge (144)
+    "106": "sv8",        # Supercharged Breaker (106)
+    "83": "sv3a",        # Raging Surf (83)
+    "083": "sv3a",       # Raging Surf (083)
+    "98": "sv10",        # Glory of Team Rocket (98)
+    "098": "sv10",       # Glory of Team Rocket (098)
+    "91": "sv04.5",      # Paldean Fates (91)
+    "091": "sv04.5",     # Paldean Fates (091)
+    "198": "sv01",       # Scarlet & Violet Base (198)
+    "142": "sv07",       # Stellar Crown (142)
+    "131": "sv08.5",     # Prismatic Evolutions (131)
     "123": "hgss1",      # HeartGold & SoulSilver (123)
     "114": "bw1",        # Black & White (114)
 }
@@ -89,7 +122,7 @@ SYSTEM_PROMPT = """Extract Pokemon card metadata from OCR and marketplace listin
 - card_name: Pokemon/Trainer name only (e.g. 'Pikachu ex', 'Charizard'). No HP, set names, or seller adjectives.
 - set_code: Official set code if explicit (e.g. 'sv08', 'base1'). Otherwise null.
 - collector_number: Card number (e.g. '057/191', '11/102'). Only extract numbers explicitly in text.
-- attacks: List of attack/ability names.
+- attacks: List of attack/ability names (up to 2).
 - language: 2-letter lowercase code ('es', 'en', 'ja', 'fr', 'de', 'it') of the PHYSICAL CARD itself (based on card OCR markers like 'HP' vs 'PS', attack text, or explicit statements like 'en inglés'). Do NOT use the seller description language to determine card language.
 - is_holo: Boolean indicating foil/holo/reverse."""
 
@@ -159,6 +192,7 @@ class EntityParser:
             use_mmap=True,
             verbose=False,
         )
+        self._llm_lock = threading.Lock()
 
     @staticmethod
     def detect_card_language(
@@ -253,24 +287,36 @@ class EntityParser:
                     frac_match = m
                     break
 
-        if not frac_match:
-            return None
+        # Check for promo patterns (e.g. SVP 159, SWSH 123, BlackStar Promo 21)
+        promo_match = re.search(r"\b(svp|swsh|sm|xy|bw|dp|hgss)[- ]?(\d{1,3})\b", combined_lower)
+        bsp_match = re.search(r"\b(\d{1,3})\s+blackstar\s+promo\b", combined_lower) if not promo_match else None
 
-        num_str, den_str = frac_match.group(1).strip(), frac_match.group(2).strip()
-        if den_str not in STRICT_DENOMINATOR_SET_MAP:
+        if promo_match:
+            prefix = promo_match.group(1).lower()
+            set_code = prefix if prefix.endswith("p") else prefix + "p"
+            num_str = promo_match.group(2).lstrip("0") or "0"
+            collector_number = num_str
+        elif bsp_match:
+            set_code = "basep"
+            collector_number = bsp_match.group(1).lstrip("0") or "0"
+        elif not frac_match:
             return None
-
-        # Validate numerator bounds
-        try:
-            num_int = int(num_str)
-            den_int = int(den_str)
-            if num_int <= 0 or num_int > (den_int + 50):
+        else:
+            num_str, den_str = frac_match.group(1).strip(), frac_match.group(2).strip()
+            if den_str not in STRICT_DENOMINATOR_SET_MAP:
                 return None
-        except ValueError:
-            return None
 
-        set_code = STRICT_DENOMINATOR_SET_MAP[den_str]
-        collector_number = f"{num_str}/{den_str}"
+            # Validate numerator bounds
+            try:
+                num_int = int(num_str)
+                den_int = int(den_str)
+                if num_int <= 0 or num_int > (den_int + 50):
+                    return None
+            except ValueError:
+                return None
+
+            set_code = STRICT_DENOMINATOR_SET_MAP[den_str]
+            collector_number = f"{num_str}/{den_str}"
 
         # 2. Extract and clean card name from title (or OCR header if title empty)
         name_source = seller_title.strip() if seller_title else ocr_text.strip()
@@ -296,6 +342,10 @@ class EntityParser:
             r"\b(holo\s+rare|holo|reverse\s+holo|reverse|ultra\s+rara|ultra\s+rare|rare|rara)\b.*$",
             r"\b(teracristal|terastal)\b.*$",
             r"\b(base\s+set(\s*2)?)\b.*$",
+            r"\b(fuegos\s+fantasmales|chispas\s+fulgurantes|surging\s+sparks|aquapolis|aquopolis|jungle|jungla|fossil)\b.*$",
+            r"\b(fase\s*[012]|stage\s*[012]|básico|basico)\b.*$",
+            r"\b(promo\s+svp\s*\d+|promo\s+swsh\s*\d+|promo|blackstar\s+promo)\b.*$",
+            r"\b(sellada|sellado|precinto|precintada)\b.*$",
             r"\b(full\s+art|secret\s+rare|special\s+illustration\s+rare)\b.*$",
             r"\b(sar|sir|hr|sr|ur|ar|ir)\b.*$",
             r"\b(psa\s*\d+|cgc\s*\d+|bgs\s*\d+|nm\s*[-–]?\s*mint|\bnm\b|\bmint\b).*$",
@@ -377,14 +427,37 @@ class EntityParser:
         schema = ExtractedCardMetadata.model_json_schema()
 
         try:
-            response = self.llm.create_chat_completion(
-                messages=messages,
-                response_format={"type": "json_object", "schema": schema},
-                temperature=0.0,
-                max_tokens=128,
-            )
+            with self._llm_lock:
+                if hasattr(self.llm, "reset"):
+                    try:
+                        self.llm.reset()
+                    except Exception:
+                        pass
+                response = self.llm.create_chat_completion(
+                    messages=messages,
+                    response_format={"type": "json_object", "schema": schema},
+                    temperature=0.0,
+                    repeat_penalty=1.15,
+                    max_tokens=180,
+                    stop=["<|im_end|>", "<|endoftext|>"],
+                )
             raw_json = response["choices"][0]["message"]["content"]
-            metadata = ExtractedCardMetadata.model_validate_json(raw_json)
+            try:
+                metadata = ExtractedCardMetadata.model_validate_json(raw_json)
+            except Exception as json_err:
+                # If JSON was truncated or malformed, attempt regex extraction of card_name and collector_number
+                logger.debug(f"JSON validation error on '{raw_json}': {json_err}, attempting recovery")
+                name_match = re.search(r'"card_name"\s*:\s*"([^"]+)"', raw_json)
+                col_match = re.search(r'"collector_number"\s*:\s*"([^"]+)"', raw_json)
+                set_match = re.search(r'"set_code"\s*:\s*"([^"]+)"', raw_json)
+                if name_match:
+                    metadata = ExtractedCardMetadata(
+                        card_name=name_match.group(1),
+                        collector_number=col_match.group(1) if col_match else None,
+                        set_code=set_match.group(1) if set_match else None,
+                    )
+                else:
+                    raise json_err
 
             # Post-normalization heuristics to refine card_name and collector_number
             metadata = self._refine_metadata(metadata, ocr_text, seller_title, seller_description)
@@ -394,6 +467,20 @@ class EntityParser:
             logger.warning(
                 f"LLM entity extraction error: {exc}. Using heuristic fallback extractor."
             )
+            # Recreate LLM instance if C++ state was corrupted
+            try:
+                with self._llm_lock:
+                    self.llm = Llama(
+                        model_path=self.model_path,
+                        n_ctx=self.n_ctx,
+                        n_threads=self.threads,
+                        n_batch=512,
+                        n_ubatch=512,
+                        use_mmap=True,
+                        verbose=False,
+                    )
+            except Exception:
+                pass
             return self._heuristic_fallback(ocr_text, seller_title, seller_description)
 
     def _refine_metadata(

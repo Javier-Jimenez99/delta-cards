@@ -254,6 +254,19 @@ class TCGDexResolver:
             "golpe fusión": ["swsh08"],
             "obsidian flames": ["sv03"],
             "llamas obsidianas": ["sv03"],
+            "fuegos fantasmales": ["me02"],
+            "aquapolis": ["ecard2"],
+            "aquopolis": ["ecard2"],
+            "skyridge": ["ecard3"],
+            "expedition": ["ecard1"],
+            "jungle": ["base2"],
+            "jungla": ["base2"],
+            "fossil": ["base3"],
+            "team rocket": ["base5"],
+            "supercharged breaker": ["sv8"],
+            "parablaze": ["sv8"],
+            "raging surf": ["sv3a"],
+            "glory of team rocket": ["sv10"],
         }
         for alias, targets in alias_map.items():
             if clean_set == alias or clean_set in alias:

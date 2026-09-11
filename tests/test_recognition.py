@@ -197,9 +197,29 @@ class TestPipelineEndToEnd:
     """Tests for end-to-end CardRecognitionPipeline."""
 
     @pytest.mark.asyncio
-    async def test_process_card_listing_async(self, synthetic_card_image):
+    async def test_process_card_listing_early_text_fastpath(self):
+        """Verifies early text fast-path succeeds in ~0.05s without needing an image."""
         title = "Carta Pokemon Furret 136/201 Darkness Ablaze Español"
         desc = "Vendo carta Furret 136/201 en perfecto estado."
+
+        result = await process_card_listing(
+            image_source=None,
+            title=title,
+            description=desc,
+        )
+
+        assert result["status"] == "success"
+        assert result["extraction_method"] == "strict_deterministic_text"
+        assert result["card_rectified"] is False
+        assert result["verified_card"]["id"] == "swsh3-136"
+        assert result["cardmarket"]["idProduct"] == "483559"
+        assert result["cardmarket"]["prices"] is not None
+
+    @pytest.mark.asyncio
+    async def test_process_card_listing_async(self, synthetic_card_image):
+        """Verifies visual isolation and OCR path when listing title does not contain the fraction."""
+        title = "Carta Pokemon Furret Darkness Ablaze Español"
+        desc = "Vendo carta Furret en perfecto estado."
 
         result = await process_card_listing(
             image_source=synthetic_card_image,
@@ -212,3 +232,4 @@ class TestPipelineEndToEnd:
         assert result["verified_card"]["id"] == "swsh3-136"
         assert result["cardmarket"]["idProduct"] == "483559"
         assert result["cardmarket"]["prices"] is not None
+

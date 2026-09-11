@@ -299,8 +299,79 @@ def main() -> None:
         card_offers = [o for o in offers if o.product_type == "single_card"]
         tcgdex_assigned_count = 0
         if not args.skip_tcgdex and card_offers:
-            status.update(f"[bold cyan]Assigning TCGDex & Cardmarket IDs to {len(card_offers)} card offers...[/bold cyan]")
-            assign_tcgdex_to_offers(offers)
+            status.stop()
+
+            # Check database for offers that already exist
+            already_in_db = set()
+            if config.output_settings.save_db and not args.no_db:
+                try:
+                    from .database import get_engine, WallapopOffers
+                    from sqlmodel import Session, select
+                    eng = get_engine(args.db_url)
+                    with Session(eng) as s:
+                        card_ids = [o.id for o in card_offers]
+                        for i in range(0, len(card_ids), 500):
+                            chunk = card_ids[i:i + 500]
+                            existing = s.exec(
+                                select(
+                                    WallapopOffers.id,
+                                    WallapopOffers.tcgdex_id,
+                                    WallapopOffers.cardmarket_product_id,
+                                    WallapopOffers.language,
+                                )
+                                .where(WallapopOffers.id.in_(chunk))
+                            ).all()
+                            db_lookup = {row[0]: row for row in existing}
+                            for o in card_offers:
+                                if o.id in db_lookup:
+                                    already_in_db.add(o.id)
+                                    db_id, db_tcgdex, db_cm, db_lang = db_lookup[o.id]
+                                    if db_tcgdex:
+                                        o.tcgdex_id = db_tcgdex
+                                    if db_cm:
+                                        o.cardmarket_product_id = db_cm
+                                    if db_lang:
+                                        o.language = db_lang
+                except Exception as exc:
+                    logger.debug(f"Could not pre-check DB for existing card offers: {exc}")
+
+            # Offers already in DB or already assigned do NOT go into the assigning process
+            new_card_offers = [
+                o for o in card_offers
+                if o.id not in already_in_db and not o.tcgdex_id and not o.cardmarket_product_id
+            ]
+            already_count = len(card_offers) - len(new_card_offers)
+
+            if already_count > 0:
+                console.print(f"[cyan]ℹ {already_count}/{len(card_offers)} card offers already exist in DB (skipping card assignment).[/cyan]")
+
+            if not new_card_offers:
+                console.print("[green]✓ All card offers were already scraped previously.[/green]")
+            else:
+                from tqdm import tqdm
+
+                matched = [0]
+                pbar = tqdm(total=len(new_card_offers), desc=f"Assigning new cards (0/{len(new_card_offers)} matched)", unit="card")
+
+                def assignment_progress(index, total, offer):
+                    if getattr(offer, "tcgdex_id", None):
+                        matched[0] += 1
+                    pbar.set_description(f"Assigning new cards ({matched[0]}/{len(new_card_offers)} matched)")
+                    pbar.update(1)
+                    # Incrementally save this offer so progress is never lost if interrupted
+                    if config.output_settings.save_db and not args.no_db:
+                        try:
+                            save_offers_to_db([offer], db_url=args.db_url)
+                        except Exception:
+                            pass
+
+                prev_level = logging.getLogger().level
+                logging.getLogger().setLevel(logging.ERROR)
+                assign_tcgdex_to_offers(new_card_offers, progress_callback=assignment_progress, max_concurrency=4)
+                logging.getLogger().setLevel(prev_level)
+                pbar.close()
+
+            status.start()
             tcgdex_assigned_count = sum(1 for o in card_offers if o.tcgdex_id)
 
         status.update("[bold cyan]Saving scraped data...[/bold cyan]")

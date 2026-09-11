@@ -416,7 +416,7 @@ class VisualCardDetector:
         # 3. If still no card detected, raise custom exception
         if corners is None:
             raise CardNotDetectedError(
-                "No Pokémon card detected with sufficient confidence in the provided image."
+                "card boundary contours not detected with sufficient confidence"
             )
 
         # 4. Rectify and deskew upright

@@ -3,7 +3,7 @@
 from .models import SearchConfig, OfferListing, SearchProfile, WallapopSettings, OutputSettings
 from .config_loader import load_config
 from .wallapop import CardSearchClient, CardOffersScraper, WallapopClient, WallapopScraper, run_scraper
-from .tcgdex import TCGDexMatcher, assign_tcgdex_to_offers, enrich_card_offers_in_db, is_card_offer
+from .tcgdex import assign_tcgdex_to_offers, enrich_card_offers_in_db, is_card_offer
 from .recognition import (
     CardNotDetectedError,
     CardOCRReader,
@@ -35,7 +35,6 @@ __all__ = [
     "WallapopClient",
     "WallapopScraper",
     "run_scraper",
-    "TCGDexMatcher",
     "assign_tcgdex_to_offers",
     "enrich_card_offers_in_db",
     "is_card_offer",
@@ -59,5 +58,3 @@ __all__ = [
     "AlertConditionResult",
     "main",
 ]
-
-

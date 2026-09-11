@@ -187,3 +187,10 @@ Run automated tests:
 ```bash
 uv run pytest
 ```
+
+---
+
+## 📖 Architecture & Recognition Pipeline
+
+For an in-depth explanation of how single card visual detection, OCR, hybrid LLM extraction, TCGdex matching, and bounded multiprocessing work, see [docs/pipeline.md](docs/pipeline.md).
+

@@ -1,7 +1,63 @@
 """Data models for card offers search configuration and scraped listings."""
 
+import re
 from typing import List, Optional, Union
 from pydantic import BaseModel, Field
+
+# Products that MUST NOT have TCGDex IDs assigned
+EXCLUDED_PRODUCT_TYPES = {
+    "booster_box",
+    "booster_pack",
+    "deck",
+    "etb",
+    "elite_trainer_box",
+}
+
+LOT_PATTERNS = [
+    r"\blote\s+(\d+|de)\b",
+    r"\blotto\s+(\d+|di)\b",
+    r"\bbulk\b",
+    r"\bmistery\s+box\b",
+    r"\bmystery\s+box\b",
+    r"\bbooster\s+box\b",
+    r"\bultra\s+premium\s+collection\b",
+    r"\bupc\b",
+    r"\bgift\s+box\b",
+    r"\b\d+\s+carte\b",
+    r"^lote\b",
+    r"^lotto\b",
+    r"^bulk\b",
+    r"^mazo\b",
+]
+
+
+def is_card_offer(
+    product_type: Optional[str],
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+) -> bool:
+    """Verifies whether an offer represents a single card listing.
+
+    Strictly excludes booster boxes, booster packs, displays, full decks, ETBs,
+    and bulk lots / mystery boxes.
+    """
+    if not product_type:
+        return False
+    pt = product_type.lower().strip()
+    if pt in EXCLUDED_PRODUCT_TYPES:
+        return False
+    if any(sealed_term in pt for sealed_term in ["box", "pack", "deck", "etb", "sobre", "caja", "display"]):
+        return False
+    if pt not in ("single_card", "card"):
+        return False
+
+    # Check title for clear non-single-card listings (lots, bulk, mystery boxes, decks)
+    if title:
+        t_clean = title.strip().lower()
+        if any(re.search(pat, t_clean) for pat in LOT_PATTERNS):
+            return False
+
+    return True
 
 
 class WallapopSettings(BaseModel):

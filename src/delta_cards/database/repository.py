@@ -3,6 +3,7 @@
 import logging
 from datetime import datetime, timezone
 from typing import List, Optional
+from sqlalchemy import func
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -185,9 +186,9 @@ def save_offers_to_db(
                     "image_url": stmt.excluded.image_url,
                     "seller_link": stmt.excluded.seller_link,
                     "seller_user_id": stmt.excluded.seller_user_id,
-                    "cardmarket_product_id": stmt.excluded.cardmarket_product_id,
-                    "language": stmt.excluded.language,
-                    "tcgdex_id": stmt.excluded.tcgdex_id,
+                    "cardmarket_product_id": func.coalesce(stmt.excluded.cardmarket_product_id, WallapopOffers.cardmarket_product_id),
+                    "language": func.coalesce(stmt.excluded.language, WallapopOffers.language),
+                    "tcgdex_id": func.coalesce(stmt.excluded.tcgdex_id, WallapopOffers.tcgdex_id),
                     "updated_at": now,
                 },
             )
@@ -212,9 +213,9 @@ def save_offers_to_db(
                     "image_url": stmt.excluded.image_url,
                     "seller_link": stmt.excluded.seller_link,
                     "seller_user_id": stmt.excluded.seller_user_id,
-                    "cardmarket_product_id": stmt.excluded.cardmarket_product_id,
-                    "language": stmt.excluded.language,
-                    "tcgdex_id": stmt.excluded.tcgdex_id,
+                    "cardmarket_product_id": func.coalesce(stmt.excluded.cardmarket_product_id, WallapopOffers.cardmarket_product_id),
+                    "language": func.coalesce(stmt.excluded.language, WallapopOffers.language),
+                    "tcgdex_id": func.coalesce(stmt.excluded.tcgdex_id, WallapopOffers.tcgdex_id),
                     "updated_at": now,
                 },
             )

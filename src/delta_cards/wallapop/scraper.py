@@ -92,11 +92,13 @@ class CardOffersScraper:
     async def run(
         self,
         progress_callback: Optional[Any] = None,
+        on_offer: Optional[Any] = None,
     ) -> List[OfferListing]:
         """Runs the search pipeline across all configured profiles.
 
         Args:
             progress_callback: Optional callable(event_name: str, data: dict) for UI progress.
+            on_offer: Optional callable(offer: OfferListing) called as each valid unique offer is found.
         """
         all_offers: Dict[str, OfferListing] = {}
         total_profiles = len(self.config.search_profiles)
@@ -173,6 +175,11 @@ class CardOffersScraper:
                     all_offers[item_id] = offer
                     profile_new_valid += 1
                     query_new_valid += 1
+                    if on_offer:
+                        try:
+                            on_offer(offer)
+                        except Exception as exc:
+                            logger.debug(f"Error in on_offer callback for {item_id}: {exc}")
 
                 if progress_callback:
                     progress_callback(

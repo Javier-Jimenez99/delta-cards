@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import sys
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import cv2
 import numpy as np
@@ -61,32 +61,83 @@ class CardRecognitionPipeline:
         logger.info(f"Starting card recognition for listing: '{title}'")
         t_start = time.perf_counter()
 
+        # Step 0: Early Text Fast-Path (0.001s)
+        # Attempt deterministic extraction from seller title & description BEFORE downloading images or running OCR.
+        # If the seller explicitly provided a valid set fraction (e.g. '057/191', '11/102') or promo code and
+        # TCGdex confirms it with strict verification, we avoid downloading the image and running OCR entirely!
+        t_early = time.perf_counter()
+        early_strict_meta = self.entity_parser.try_strict_deterministic_extraction(
+            ocr_text="",
+            seller_title=title,
+            seller_description=description,
+        )
+        if early_strict_meta is not None:
+            t_early_tcg = time.perf_counter()
+            early_resolution = await self.resolver.resolve_card(
+                early_strict_meta, strict_verification=True
+            )
+            t_tcgdex = time.perf_counter() - t_early_tcg
+            if early_resolution.get("status") == "success":
+                t_total = time.perf_counter() - t_start
+                logger.info(
+                    f"Early text fast-path SUCCEEDED: card='{early_strict_meta.card_name}', "
+                    f"id='{early_resolution['verified_card']['id']}' ({t_total:.3f}s)"
+                )
+                inferred_img_url = image_url or (image_source if isinstance(image_source, str) and image_source.startswith(("http://", "https://")) else None)
+                return {
+                    "status": "success",
+                    "extraction_method": "strict_deterministic_text",
+                    "image_url": inferred_img_url,
+                    "isolation_status": "skipped_early_match",
+                    "card_rectified": False,
+                    "ocr_text_snippet": "",
+                    "extracted_metadata": early_strict_meta.model_dump(),
+                    "strategy": early_resolution.get("strategy"),
+                    "verified_card": early_resolution.get("verified_card"),
+                    "cardmarket": early_resolution.get("cardmarket"),
+                    "profiling": {
+                        "isolation_s": 0.0,
+                        "ocr_s": 0.0,
+                        "entity_extraction_s": round(max(0.001, time.perf_counter() - t_early - t_tcgdex), 3),
+                        "tcgdex_resolution_s": round(t_tcgdex, 3),
+                        "total_s": round(t_total, 3),
+                    },
+                }
+
         # Step 1: Visual Card Isolation & Rectification (in thread pool)
         card_image = None
         isolation_status = "isolated"
-        t0 = time.perf_counter()
-        try:
-            card_image = await asyncio.to_thread(self.detector.isolate_card, image_source)
-        except CardNotDetectedError as exc:
-            logger.warning(f"Card isolation notice: {exc}. Proceeding with fallback image processing.")
-            isolation_status = "fallback_full_frame"
-            # Fall back to using the raw image directly for OCR
-            card_image = await asyncio.to_thread(self.detector._load_image, image_source)
-        except Exception as exc:
-            logger.error(f"Unexpected error in card isolation: {exc}")
-            isolation_status = "failed"
-            card_image = None
-        t_isolation = time.perf_counter() - t0
+        t_isolation = 0.0
+        if image_source is not None:
+            t0 = time.perf_counter()
+            try:
+                card_image = await asyncio.to_thread(self.detector.isolate_card, image_source)
+            except CardNotDetectedError as exc:
+                logger.warning(f"Card borders not clearly detected in photo ({exc}). Proceeding with OCR on full uncropped image.")
+                isolation_status = "fallback_full_frame"
+                # Fall back to using the raw image directly for OCR
+                try:
+                    card_image = await asyncio.to_thread(self.detector._load_image, image_source)
+                except Exception:
+                    card_image = None
+            except Exception as exc:
+                logger.warning(f"Unexpected error in card isolation: {exc}")
+                isolation_status = "failed"
+                card_image = None
+            t_isolation = time.perf_counter() - t0
+        else:
+            isolation_status = "skipped_no_image"
 
         # Step 2: Full-Card OCR Extraction (in thread pool)
         ocr_text = ""
-        t1 = time.perf_counter()
+        t_ocr = 0.0
         if card_image is not None:
+            t1 = time.perf_counter()
             try:
                 ocr_text = await asyncio.to_thread(self.ocr_reader.extract_text, card_image)
             except Exception as exc:
                 logger.error(f"Error during OCR extraction: {exc}")
-        t_ocr = time.perf_counter() - t1
+            t_ocr = time.perf_counter() - t1
 
         logger.debug(f"Extracted OCR text length: {len(ocr_text)} characters")
 
@@ -175,6 +226,79 @@ class CardRecognitionPipeline:
         }
 
         return consolidated
+
+    async def process_offers(
+        self,
+        offers: List[Any],
+        progress_callback: Optional[Any] = None,
+        max_concurrency: int = 4,
+    ) -> List[Any]:
+        """Processes a list of OfferListing objects through the recognition pipeline concurrently.
+
+        Enriches single card offers in-place with TCGdex and Cardmarket information.
+        Runs with an asyncio Semaphore bounding concurrent card recognition tasks to max_concurrency.
+        """
+        try:
+            from ..models import is_card_offer
+        except ImportError:
+            is_card_offer = None
+
+        sem = asyncio.Semaphore(max_concurrency)
+        counter = [0]
+        total = len(offers)
+
+        async def _process_single(offer):
+            ptype = getattr(offer, "product_type", None)
+            title = getattr(offer, "title", "")
+            desc = getattr(offer, "description", "") or ""
+
+            if is_card_offer and not is_card_offer(ptype, title=title, description=desc):
+                return offer
+
+            if getattr(offer, "_skip_pipeline", False):
+                return offer
+            if getattr(offer, "tcgdex_id", None) or getattr(offer, "cardmarket_product_id", None):
+                return offer
+
+            async with sem:
+                try:
+                    result = await self.process_card_listing(
+                        image_source=getattr(offer, "image_url", None),
+                        title=title,
+                        description=desc,
+                        image_url=getattr(offer, "image_url", None),
+                    )
+                    if result.get("status") == "success" and result.get("verified_card"):
+                        vc = result["verified_card"]
+                        cm = result.get("cardmarket", {}) or {}
+                        offer.tcgdex_id = vc.get("id")
+                        offer.cardmarket_product_id = cm.get("idProduct")
+                        offer.cardmarket_url = cm.get("url")
+                        prices = cm.get("prices", {}) or {}
+                        if prices and prices.get("low") is not None:
+                            offer.cardmarket_low_price = prices.get("low")
+                        meta = result.get("extracted_metadata", {}) or {}
+                        if meta.get("language"):
+                            offer.language = meta["language"]
+                except Exception as exc:
+                    logger.warning(f"Pipeline error processing offer {getattr(offer, 'id', '')}: {exc}")
+                finally:
+                    counter[0] += 1
+                    if progress_callback:
+                        progress_callback(counter[0], total, offer)
+            return offer
+
+        await asyncio.gather(*[_process_single(o) for o in offers])
+        return offers
+
+    def process_offers_sync(
+        self,
+        offers: List[Any],
+        progress_callback: Optional[Any] = None,
+        max_concurrency: int = 4,
+    ) -> List[Any]:
+        """Synchronous wrapper for process_offers."""
+        return asyncio.run(self.process_offers(offers, progress_callback=progress_callback, max_concurrency=max_concurrency))
 
 
 # Singleton pipeline instance for shared lifecycle
