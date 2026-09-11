@@ -35,3 +35,5 @@ data/models/
 *.onnx
 onnx/
 *.db
+*.db-wal
+*.db-shm
