@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 
 from ..database.connection import get_engine
 from ..database.models import WallapopOffers
+from ..database.repository import upsert_cardmarket_product, upsert_cardmarket_price
 from ..models import OfferListing
 from .matcher import MatchResult, TCGDexMatcher
 
@@ -78,9 +79,12 @@ def assign_tcgdex_to_offers(
             if match_res.tcgdex_id:
                 offer.tcgdex_id = match_res.tcgdex_id
                 offer.cardmarket_product_id = match_res.cardmarket_product_id
+                offer.cardmarket_url = match_res.cardmarket_url
+                offer.cardmarket_low_price = match_res.cardmarket_low_price
                 logger.debug(
                     f"Assigned '{offer.title[:30]}' -> TCGDex: {offer.tcgdex_id}, "
-                    f"Cardmarket: {offer.cardmarket_product_id} (Score: {match_res.confidence_score:.1f})"
+                    f"Cardmarket: {offer.cardmarket_product_id} ({offer.cardmarket_url}) "
+                    f"(Score: {match_res.confidence_score:.1f})"
                 )
         except Exception as exc:
             logger.warning(f"Error matching offer '{offer.id}' ({offer.title[:30]}): {exc}")
@@ -134,7 +138,23 @@ def enrich_card_offers_in_db(
                 )
                 if res.tcgdex_id:
                     db_offer.tcgdex_id = res.tcgdex_id
-                    db_offer.cardmarket_product_id = res.cardmarket_product_id
+                    if res.cardmarket_product_id:
+                        upsert_cardmarket_product(
+                            product_id=res.cardmarket_product_id,
+                            cardmarket_url=(
+                                res.cardmarket_url
+                                or f"https://www.cardmarket.com/es/Pokemon/Products?idProduct={res.cardmarket_product_id}"
+                            ),
+                            session=session,
+                        )
+                        db_offer.cardmarket_product_id = res.cardmarket_product_id
+                        if getattr(res, "cardmarket_low_price", None) is not None:
+                            upsert_cardmarket_price(
+                                product_id=res.cardmarket_product_id,
+                                language=db_offer.language or "es",
+                                min_price_all=res.cardmarket_low_price,
+                                session=session,
+                            )
                     session.add(db_offer)
                     updated_count += 1
             except Exception as exc:

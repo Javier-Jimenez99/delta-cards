@@ -24,6 +24,7 @@ class SearchProfile(BaseModel):
     min_price: Optional[float] = None
     max_price: Optional[float] = None
     max_items: int = 50
+    enabled: bool = True
 
     @property
     def queries(self) -> List[str]:
@@ -72,5 +73,8 @@ class OfferListing(BaseModel):
     published_date: Optional[str] = None
     search_profile_id: Optional[str] = None
     cardmarket_product_id: Optional[str] = None
+    language: Optional[str] = "es"
+    cardmarket_url: Optional[str] = None
+    cardmarket_low_price: Optional[float] = None
     tcgdex_id: Optional[str] = None
 

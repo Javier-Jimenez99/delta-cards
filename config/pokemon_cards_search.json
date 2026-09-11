@@ -164,10 +164,10 @@
         "carta",
         "pokemon",
         "holo",
+        "foil",
         "reverse",
         "secret",
         "ultra rare",
-        "psa",
         "promo",
         "gx",
         "vmax",
@@ -189,7 +189,10 @@
         "ps5",
         "wii",
         "switch",
-        "consola"
+        "consola",
+        "gradeada",
+        "psa",
+        "grado"
       ],
       "min_price": 1.0,
       "max_price": null,

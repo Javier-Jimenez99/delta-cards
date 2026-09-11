@@ -64,6 +64,25 @@ def parse_args(args: Optional[list] = None) -> argparse.Namespace:
         help="Override database connection URL (default: DATABASE_URL env var)",
     )
     parser.add_argument(
+        "-p",
+        "--profile",
+        nargs="+",
+        default=None,
+        help="One or more profile IDs to run (e.g. -p single_card)",
+    )
+    parser.add_argument(
+        "-t",
+        "--type",
+        nargs="+",
+        default=None,
+        help="One or more product types to run (e.g. -t single_card booster_box)",
+    )
+    parser.add_argument(
+        "--scrape-prices",
+        action="store_true",
+        help="Scrape Cardmarket minimum prices (overall and Spanish sellers) for matched cards",
+    )
+    parser.add_argument(
         "--skip-tcgdex",
         action="store_true",
         help="Skip automatic assignment of TCGDex ID and Cardmarket Product ID to card offers",
@@ -118,6 +137,24 @@ def main() -> None:
     except Exception as exc:
         console.print(f"[bold red]Error loading config:[/] {exc}", file=sys.stderr)
         sys.exit(1)
+
+    # Filter by enabled flag from config
+    config.search_profiles = [p for p in config.search_profiles if getattr(p, "enabled", True)]
+
+    # Filter search profiles if requested
+    if args.profile:
+        selected_profiles = set(args.profile)
+        config.search_profiles = [p for p in config.search_profiles if p.id in selected_profiles]
+        if not config.search_profiles:
+            console.print(f"[bold red]Error:[/] No profiles found matching: {', '.join(args.profile)}", file=sys.stderr)
+            sys.exit(1)
+
+    if args.type:
+        selected_types = set(args.type)
+        config.search_profiles = [p for p in config.search_profiles if p.product_type in selected_types]
+        if not config.search_profiles:
+            console.print(f"[bold red]Error:[/] No profiles found matching product type(s): {', '.join(args.type)}", file=sys.stderr)
+            sys.exit(1)
 
     # Apply CLI overrides
     if args.output:
@@ -214,6 +251,31 @@ def main() -> None:
             except Exception as exc:
                 db_error = str(exc)
 
+        # Optional: Scrape Cardmarket prices for matched cards
+        cm_prices_scraped = 0
+        if args.scrape_prices and card_offers:
+            from .cardmarket import CardmarketScraper
+            cm_scraper = CardmarketScraper()
+            unique_pids = list({o.cardmarket_product_id for o in card_offers if o.cardmarket_product_id})
+            if unique_pids:
+                status.update(f"[bold cyan]Scraping Cardmarket prices for {len(unique_pids)} unique card product(s)...[/bold cyan]")
+                for pid in unique_pids:
+                    try:
+                        price_res = asyncio.run(cm_scraper.scrape_product_prices(pid, language="es"))
+                        if config.output_settings.save_db and not args.no_db:
+                            from .database import upsert_cardmarket_price, get_engine
+                            engine = get_engine(args.db_url)
+                            upsert_cardmarket_price(
+                                product_id=price_res.cardmarket_product_id,
+                                language=price_res.language,
+                                min_price_all=price_res.min_price_all,
+                                min_price_spain=price_res.min_price_spain,
+                                engine=engine,
+                            )
+                        cm_prices_scraped += 1
+                    except Exception as exc:
+                        logging.getLogger("delta_cards").warning(f"Error scraping Cardmarket price for product {pid}: {exc}")
+
     if not offers:
         console.print("\n[yellow]No offers matched the configured search and filter criteria.[/yellow]")
         return
@@ -251,10 +313,61 @@ def main() -> None:
         console.print(f"  • [bold]{fmt.upper()}:[/bold] [cyan]{pth.resolve()}[/cyan]")
     if not args.skip_tcgdex and card_offers:
         console.print(f"  • [bold]TCGDEX / CARDMARKET ENRICHMENT:[/bold] [green]{tcgdex_assigned_count}/{len(card_offers)} card offer(s) identified[/green]")
+    if args.scrape_prices and card_offers:
+        console.print(f"  • [bold]CARDMARKET PRICES:[/bold] [green]{cm_prices_scraped} card product price(s) scraped and saved[/green]")
     if db_saved_count is not None:
-        console.print(f"  • [bold]POSTGRESQL ('WallapopOffers'):[/bold] [green]{db_saved_count} offer(s) saved/updated[/green]")
+        console.print(f"  • [bold]DATABASE ('WallapopOffers'):[/bold] [green]{db_saved_count} offer(s) saved/updated[/green]")
     elif db_error:
-        console.print(f"  • [bold yellow]POSTGRESQL ('WallapopOffers'):[/bold yellow] [dim]Skipped ({db_error})[/dim]")
+        console.print(f"  • [bold yellow]DATABASE ('WallapopOffers'):[/bold yellow] [dim]Skipped ({db_error})[/dim]")
+
+    # Check database for deals (Wallapop price < Cardmarket price)
+    if config.output_settings.save_db and not args.no_db:
+        try:
+            from .database import get_engine
+            from .database.models import WallapopOffers, CardmarketPrice
+            from sqlmodel import select, Session, and_
+
+            eng = get_engine(args.db_url)
+            with Session(eng) as s:
+                deals_stmt = (
+                    select(WallapopOffers, CardmarketPrice)
+                    .join(
+                        CardmarketPrice,
+                        and_(
+                            WallapopOffers.cardmarket_product_id == CardmarketPrice.cardmarket_product_id,
+                            WallapopOffers.language == CardmarketPrice.language,
+                        ),
+                    )
+                    .where(
+                        WallapopOffers.price < CardmarketPrice.min_price_all
+                    )
+                )
+                deals = s.exec(deals_stmt).all()
+                if deals:
+                    deals_table = Table(
+                        title=f"\n🔥 Deals Found (Wallapop < Cardmarket): {len(deals)}",
+                        border_style="bold green",
+                    )
+                    deals_table.add_column("Title", style="cyan")
+                    deals_table.add_column("Wallapop", justify="right", style="bold green")
+                    deals_table.add_column("Min Cardmarket", justify="right", style="yellow")
+                    deals_table.add_column("Savings", justify="right", style="bold magenta")
+                    deals_table.add_column("Link", style="dim")
+
+                    for off, pr in deals:
+                        diff = (pr.min_price_all or 0.0) - off.price
+                        deals_table.add_row(
+                            off.title[:45],
+                            f"{off.price:.2f} €",
+                            f"{pr.min_price_all:.2f} €",
+                            f"-{diff:.2f} €",
+                            off.link,
+                        )
+                    console.print(deals_table)
+                else:
+                    console.print("\n[dim]No offers found with Wallapop price below Cardmarket minimum.[/dim]")
+        except Exception as exc:
+            logging.getLogger("delta_cards").debug(f"Error checking deals: {exc}")
 
 
 

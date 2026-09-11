@@ -14,7 +14,7 @@ from delta_cards.database.repository import (
     get_unassigned_card_offers,
 )
 from delta_cards.tcgdex.parser import parse_card_title, extract_card_number
-from delta_cards.tcgdex.matcher import TCGDexMatcher, MatchResult
+from delta_cards.tcgdex.matcher import TCGDexMatcher, MatchResult, build_cardmarket_url
 from delta_cards.tcgdex.assigner import (
     is_card_offer,
     assign_tcgdex_to_offers,
@@ -98,6 +98,30 @@ def test_matcher_extract_cardmarket_id():
     assert matcher.extract_cardmarket_id({"pricing": {}}) is None
 
 
+def test_build_cardmarket_url():
+    """Tests generating direct Cardmarket redirect URLs."""
+    # Basic usage
+    assert (
+        build_cardmarket_url("483559")
+        == "https://www.cardmarket.com/es/Pokemon/Products?idProduct=483559"
+    )
+    # Integer product ID and English language
+    assert (
+        build_cardmarket_url(483559, language="en")
+        == "https://www.cardmarket.com/en/Pokemon/Products?idProduct=483559"
+    )
+    # Empty or None ID
+    assert build_cardmarket_url(None) is None
+    assert build_cardmarket_url("") is None
+
+    # TCGDexMatcher method
+    matcher = TCGDexMatcher(default_language="en")
+    assert (
+        matcher.build_cardmarket_url("483559")
+        == "https://www.cardmarket.com/en/Pokemon/Products?idProduct=483559"
+    )
+
+
 def test_assign_tcgdex_to_offers_skips_boxes_and_packs():
     """Verifies that assign_tcgdex_to_offers skips booster boxes and booster packs,
 
@@ -135,6 +159,7 @@ def test_assign_tcgdex_to_offers_skips_boxes_and_packs():
     mock_matcher.match.return_value = MatchResult(
         tcgdex_id="swsh3-136",
         cardmarket_product_id="483559",
+        cardmarket_url="https://www.cardmarket.com/es/Pokemon/Products?idProduct=483559",
         confidence_score=95.0,
         matched_name="Furret",
         matched_local_id="136",
@@ -146,12 +171,15 @@ def test_assign_tcgdex_to_offers_skips_boxes_and_packs():
     # Box and pack must NEVER be touched
     assert box_offer.tcgdex_id is None
     assert box_offer.cardmarket_product_id is None
+    assert box_offer.cardmarket_url is None
     assert pack_offer.tcgdex_id is None
     assert pack_offer.cardmarket_product_id is None
+    assert pack_offer.cardmarket_url is None
 
     # Card must be enriched
     assert card_offer.tcgdex_id == "swsh3-136"
     assert card_offer.cardmarket_product_id == "483559"
+    assert card_offer.cardmarket_url == "https://www.cardmarket.com/es/Pokemon/Products?idProduct=483559"
 
     # Matcher should have been called only ONCE (for the card)
     assert mock_matcher.match.call_count == 1
@@ -175,6 +203,7 @@ def test_database_persistence_and_repository_helpers():
         link="https://wallapop.com/item/card_100",
         tcgdex_id="base1-4",
         cardmarket_product_id="12345",
+        cardmarket_url="https://www.cardmarket.com/es/Pokemon/Products?idProduct=12345",
     )
     box_listing = OfferListing(
         id="box_200",
@@ -200,6 +229,7 @@ def test_database_persistence_and_repository_helpers():
         offer_id="box_200",
         tcgdex_id="custom-id",
         cardmarket_product_id="cm-999",
+        cardmarket_url="https://www.cardmarket.com/es/Pokemon/Products?idProduct=cm-999",
         engine=engine,
     )
     assert updated is True
@@ -208,6 +238,10 @@ def test_database_persistence_and_repository_helpers():
         box = session.exec(select(WallapopOffers).where(WallapopOffers.id == "box_200")).first()
         assert box.tcgdex_id == "custom-id"
         assert box.cardmarket_product_id == "cm-999"
+        assert box.cardmarket_product.cardmarket_url == "https://www.cardmarket.com/es/Pokemon/Products?idProduct=cm-999"
+
+        card = session.exec(select(WallapopOffers).where(WallapopOffers.id == "card_100")).first()
+        assert card.cardmarket_product.cardmarket_url == "https://www.cardmarket.com/es/Pokemon/Products?idProduct=12345"
 
 
 def test_enrich_card_offers_in_db():
@@ -251,6 +285,7 @@ def test_enrich_card_offers_in_db():
     mock_matcher.match.return_value = MatchResult(
         tcgdex_id="swsh3-136",
         cardmarket_product_id="483559",
+        cardmarket_url="https://www.cardmarket.com/es/Pokemon/Products?idProduct=483559",
         confidence_score=90.0,
     )
 
@@ -262,10 +297,12 @@ def test_enrich_card_offers_in_db():
         card_db = session.exec(select(WallapopOffers).where(WallapopOffers.id == "card_201")).first()
         assert card_db.tcgdex_id == "swsh3-136"
         assert card_db.cardmarket_product_id == "483559"
+        assert card_db.cardmarket_product.cardmarket_url == "https://www.cardmarket.com/es/Pokemon/Products?idProduct=483559"
 
         box_db = session.exec(select(WallapopOffers).where(WallapopOffers.id == "box_202")).first()
         assert box_db.tcgdex_id is None
         assert box_db.cardmarket_product_id is None
+        assert box_db.cardmarket_product is None
 
 
 def test_cli_tcgdex_arguments():
@@ -275,10 +312,18 @@ def test_cli_tcgdex_arguments():
     default_args = parse_args([])
     assert default_args.skip_tcgdex is False
     assert default_args.assign_existing_cards is False
+    assert default_args.profile is None
+    assert default_args.type is None
+    assert default_args.scrape_prices is False
 
     skip_args = parse_args(["--skip-tcgdex"])
     assert skip_args.skip_tcgdex is True
 
     assign_args = parse_args(["--assign-existing-cards"])
     assert assign_args.assign_existing_cards is True
+
+    custom_args = parse_args(["--scrape-prices", "-p", "single_card", "-t", "single_card"])
+    assert custom_args.scrape_prices is True
+    assert custom_args.profile == ["single_card"]
+    assert custom_args.type == ["single_card"]
 

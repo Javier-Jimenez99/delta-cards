@@ -70,6 +70,7 @@ def raw_to_offer_listing(
         published_date=published_str,
         search_profile_id=profile_id,
         cardmarket_product_id=raw.get("cardmarket_product_id"),
+        cardmarket_url=raw.get("cardmarket_url"),
         tcgdex_id=raw.get("tcgdex_id"),
     )
 
@@ -249,6 +250,7 @@ class CardOffersScraper:
                 "seller_link",
                 "image_url",
                 "cardmarket_product_id",
+                "cardmarket_url",
                 "tcgdex_id",
             ]
 

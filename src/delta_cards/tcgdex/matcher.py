@@ -20,6 +20,25 @@ if socket.getdefaulttimeout() is None:
 
 
 
+
+def build_cardmarket_url(
+    id_product: Optional[Any],
+    language: str = "es",
+) -> Optional[str]:
+    """Builds the direct Cardmarket redirect URL from a product ID.
+
+    Args:
+        id_product: The Cardmarket product ID (e.g. '483559' or 483559).
+        language: Language code for the URL path (default 'es').
+
+    Returns:
+        Direct Cardmarket product redirect URL or None if id_product is empty/None.
+    """
+    if not id_product:
+        return None
+    return f"https://www.cardmarket.com/{language}/Pokemon/Products?idProduct={id_product}"
+
+
 @dataclass
 class MatchResult:
     """Result of matching an offer against TCGDex."""
@@ -30,6 +49,9 @@ class MatchResult:
     matched_name: Optional[str] = None
     matched_local_id: Optional[str] = None
     matched_set_name: Optional[str] = None
+    cardmarket_url: Optional[str] = None
+    cardmarket_low_price: Optional[float] = None
+    cardmarket_trend_price: Optional[float] = None
 
 
 class TCGDexMatcher:
@@ -154,6 +176,43 @@ class TCGDexMatcher:
 
         return None
 
+    def extract_cardmarket_prices(
+        self, raw_card_data: Dict[str, Any]
+    ) -> Tuple[Optional[float], Optional[float]]:
+        """Extracts low price and trend price from TCGDex card pricing."""
+        if not raw_card_data:
+            return None, None
+
+        pricing = raw_card_data.get("pricing")
+        if isinstance(pricing, dict):
+            cm = pricing.get("cardmarket")
+            if isinstance(cm, dict):
+                low = cm.get("low")
+                trend = cm.get("trend")
+                return (
+                    float(low) if low is not None else None,
+                    float(trend) if trend is not None else None,
+                )
+
+        variants = raw_card_data.get("variants_detailed")
+        if isinstance(variants, list):
+            for v in variants:
+                if isinstance(v, dict):
+                    v_cm = v.get("pricing", {}).get("cardmarket", {})
+                    low = v_cm.get("low")
+                    trend = v_cm.get("trend")
+                    if low is not None or trend is not None:
+                        return (
+                            float(low) if low is not None else None,
+                            float(trend) if trend is not None else None,
+                        )
+
+        return None, None
+
+    def build_cardmarket_url(self, id_product: Optional[Any]) -> Optional[str]:
+        """Constructs the Cardmarket redirect URL using the matcher's default language."""
+        return build_cardmarket_url(id_product, language=self.default_language)
+
     def _score_candidate(
         self,
         candidate: Any,
@@ -247,9 +306,11 @@ class TCGDexMatcher:
             self._offer_cache[cache_key] = result
             return result
 
-        # Retrieve card raw details to get Cardmarket Product ID
+        # Retrieve card raw details to get Cardmarket Product ID & pricing
         raw_data = self._fetch_card_raw_details(best_cand.id, language=used_lang)
         cardmarket_id = self.extract_cardmarket_id(raw_data)
+        cardmarket_url = self.build_cardmarket_url(cardmarket_id)
+        cm_low, cm_trend = self.extract_cardmarket_prices(raw_data)
 
         matched_set = None
         if hasattr(best_cand, "set") and hasattr(best_cand.set, "name"):
@@ -264,6 +325,9 @@ class TCGDexMatcher:
             matched_name=getattr(best_cand, "name", None),
             matched_local_id=str(getattr(best_cand, "localId", "")),
             matched_set_name=matched_set,
+            cardmarket_url=cardmarket_url,
+            cardmarket_low_price=cm_low,
+            cardmarket_trend_price=cm_trend,
         )
         self._offer_cache[cache_key] = result
         return result
