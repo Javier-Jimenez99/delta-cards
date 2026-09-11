@@ -132,5 +132,7 @@ class OfferListing(BaseModel):
     language: Optional[str] = "es"
     cardmarket_url: Optional[str] = None
     cardmarket_low_price: Optional[float] = None
+    cardmarket_price_spain: Optional[float] = None
+    cardmarket_price_all: Optional[float] = None
     tcgdex_id: Optional[str] = None
 

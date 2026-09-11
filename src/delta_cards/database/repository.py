@@ -17,9 +17,8 @@ logger = logging.getLogger(__name__)
 def offer_to_db_model(offer: OfferListing, now: Optional[datetime] = None) -> WallapopOffers:
     """Converts an OfferListing into a WallapopOffers database model instance."""
     now_utc = now or datetime.now(timezone.utc)
-    data = offer.model_dump()
-    data.pop("cardmarket_url", None)
-    data.pop("cardmarket_low_price", None)
+    valid_fields = set(WallapopOffers.model_fields.keys())
+    data = {k: v for k, v in offer.model_dump().items() if k in valid_fields}
     data["scraped_at"] = now_utc
     data["updated_at"] = now_utc
     return WallapopOffers(**data)

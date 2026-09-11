@@ -63,8 +63,16 @@ def evaluate_alert_condition(
 
     savings_percentage = round((savings_absolute / market_price) * 100.0, 2)
 
-    pct_threshold = settings.alert_min_saving_percentage
-    abs_threshold = settings.alert_min_saving_absolute
+    pct_threshold = (
+        abs(settings.alert_min_saving_percentage)
+        if settings.alert_min_saving_percentage is not None
+        else None
+    )
+    abs_threshold = (
+        abs(settings.alert_min_saving_absolute)
+        if settings.alert_min_saving_absolute is not None
+        else None
+    )
     operator = settings.alert_condition_operator.lower()
 
     # If neither threshold is configured, any positive saving triggers
@@ -115,36 +123,99 @@ def evaluate_alert_condition(
     )
 
 
+def format_product_type(product_type: Optional[str]) -> str:
+    """Translates raw product type identifier to a user-friendly category label."""
+    if not product_type:
+        return "Otro"
+    pt = str(product_type).lower().strip()
+    mapping = {
+        "single_card": "Carta",
+        "card": "Carta",
+        "carta": "Carta",
+        "booster_pack": "Paquete",
+        "pack": "Paquete",
+        "sobre": "Paquete",
+        "booster_box": "Caja",
+        "box": "Caja",
+        "caja": "Caja",
+        "etb": "Caja (ETB)",
+        "elite_trainer_box": "Caja (ETB)",
+        "deck": "Mazo",
+        "mazo": "Mazo",
+        "lote": "Lote",
+        "lot": "Lote",
+    }
+    return mapping.get(pt, pt.replace("_", " ").title())
+
+
 def build_discord_embed(
     offer: OfferListing,
     result: AlertConditionResult,
 ) -> Dict[str, Any]:
-    """Formats a deal offer into a Discord embed object."""
+    """Formats a deal offer into a renovated Discord embed object.
+
+    Structure:
+    Deal: [title]
+    Wallapop price - Market Price of first spanish seller (🇪🇸) - market price of global less expensive seller (🌐)
+    Savings (positive number) - Type (Carta, Paquete, Caja, etc.)
+    Links to wallapop offer and to cardmarket product page.
+    """
+    # Ensure Wallapop link is normalized
+    wallapop_url = (offer.link or "").replace("https://wallapop.com/", "https://es.wallapop.com/")
+
+    # Resolve Cardmarket URL (either explicitly set or built from product ID)
+    cardmarket_url = offer.cardmarket_url
+    if not cardmarket_url and offer.cardmarket_product_id:
+        cardmarket_url = f"https://www.cardmarket.com/es/Pokemon/Products?idProduct={offer.cardmarket_product_id}"
+
+    # Price for first Spanish seller (🇪🇸) and global lowest seller (🌐)
+    price_spain = offer.cardmarket_price_spain
+    price_all = offer.cardmarket_price_all
+    if price_all is None:
+        price_all = result.market_price if (price_spain is None and result) else offer.cardmarket_low_price
+
+    spain_str = f"{price_spain:.2f} €" if price_spain is not None else "N/A"
+    all_str = f"{price_all:.2f} €" if price_all is not None else "N/A"
+
+    # Savings must be positive (e.g. 5.00 €)
+    savings_abs = abs(result.savings_absolute)
+    savings_pct = result.savings_percentage
+    if savings_pct > 0:
+        savings_str = f"**{savings_abs:.2f} €** ({savings_pct:.1f}%)"
+    else:
+        savings_str = f"**{savings_abs:.2f} €**"
+
+    # Translated product category (Carta, Paquete, Caja, etc.)
+    type_label = format_product_type(offer.product_type)
+
     fields = [
-        {"name": "💶 Wallapop Price", "value": f"**{offer.price:.2f} €**", "inline": True},
-        {"name": "📈 Market Price", "value": f"{result.market_price:.2f} €", "inline": True},
-        {
-            "name": "💰 Savings",
-            "value": f"**-{result.savings_absolute:.2f} €** ({result.savings_percentage:.1f}%)",
-            "inline": True,
-        },
+        {"name": "💶 Wallapop", "value": f"**{offer.price:.2f} €**", "inline": True},
+        {"name": "🇪🇸 ESP", "value": f"**{spain_str}**", "inline": True},
+        {"name": "🇪🇺 UE", "value": f"**{all_str}**", "inline": True},
+        {"name": "💰 Ahorro", "value": savings_str, "inline": True},
+        {"name": "📦 Tipo", "value": f"**{type_label}**", "inline": True},
     ]
 
-    if offer.product_type:
-        fields.append({"name": "📦 Type", "value": offer.product_type, "inline": True})
     if offer.location:
-        fields.append({"name": "📍 Location", "value": offer.location, "inline": True})
-    if offer.cardmarket_url:
-        fields.append(
-            {"name": "🔗 Cardmarket", "value": f"[View Product]({offer.cardmarket_url})", "inline": True}
-        )
+        fields.append({"name": "📍 Ubicación", "value": f"**{offer.location}**", "inline": True})
+
+    # Enlaces a la oferta en Wallapop y a la página de Cardmarket
+    links = [f"[🛒 Oferta en Wallapop]({wallapop_url})"]
+    if cardmarket_url:
+        links.append(f"[📈 Producto en Cardmarket]({cardmarket_url})")
+
+    fields.append({
+        "name": "🔗 Enlaces",
+        "value": " • ".join(links),
+        "inline": False,
+    })
 
     embed: Dict[str, Any] = {
-        "title": f"🔥 Deal: {offer.title[:200]}",
-        "url": offer.link,
+        "title": f"Oferta: {offer.title[:200]}",
+        "url": wallapop_url,
         "color": 0x2ECC71,  # Emerald Green
         "fields": fields,
-        "footer": {"text": "Delta Cards Scraper Alert"},
+        "footer": {"text": "Alerta de ofertas Delta Cards"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -154,24 +225,25 @@ def build_discord_embed(
     return embed
 
 
+DEFAULT_OFFER_ALERT_MESSAGE: str = "<:pokeball_light:1548052080357412995> ¡Ha aparecido una oferta salvaje!"
+
+
 def send_discord_webhook(
     webhook_url: str,
     embeds: List[Dict[str, Any]],
-    content: Optional[str] = None,
+    content: Optional[str] = DEFAULT_OFFER_ALERT_MESSAGE,
     timeout: float = 10.0,
 ) -> bool:
-    """Sends one or more embeds to a Discord incoming webhook URL.
-
-    Batches embeds into chunks of 10 (Discord API maximum per request).
+    """Sends each offer embed as a separate notification message to Discord with alert text.
 
     Args:
         webhook_url: The Discord webhook endpoint URL.
         embeds: List of embed dictionaries to send.
-        content: Optional top-level message text.
+        content: Message text displayed before each offer embed.
         timeout: HTTP request timeout in seconds.
 
     Returns:
-        True if all batches were delivered successfully, False otherwise.
+        True if all embeds were delivered successfully, False otherwise.
     """
     if not webhook_url or not webhook_url.strip():
         logger.debug("Discord webhook URL is empty; skipping webhook delivery.")
@@ -181,22 +253,20 @@ def send_discord_webhook(
         return True
 
     success = True
-    chunk_size = 10  # Discord API limit per webhook execution
 
-    for i in range(0, len(embeds), chunk_size):
-        chunk = embeds[i : i + chunk_size]
+    for embed in embeds:
         payload: Dict[str, Any] = {
             "username": "Delta Cards Alert",
-            "embeds": chunk,
+            "embeds": [embed],
         }
-        if content and i == 0:
+        if content:
             payload["content"] = content
 
         try:
             with httpx.Client(timeout=timeout) as client:
                 response = client.post(webhook_url, json=payload)
                 if response.status_code in (200, 204):
-                    logger.info(f"Successfully sent Discord alert with {len(chunk)} item(s).")
+                    logger.info("Successfully sent Discord alert for offer.")
                 elif response.status_code == 429:
                     retry_after = response.headers.get("Retry-After", "unknown")
                     logger.warning(
@@ -249,14 +319,31 @@ class DiscordAlertService:
 
         matching_embeds = []
         for offer in offers:
-            market_price = None
+            ref_entry = None
             if reference_prices and offer.id in reference_prices:
-                market_price = reference_prices[offer.id]
+                ref_entry = reference_prices[offer.id]
             elif reference_prices and offer.cardmarket_product_id in reference_prices:
-                market_price = reference_prices[offer.cardmarket_product_id]
-            elif offer.cardmarket_low_price is not None:
-                market_price = offer.cardmarket_low_price
+                ref_entry = reference_prices[offer.cardmarket_product_id]
 
+            price_all = offer.cardmarket_price_all
+            price_spain = offer.cardmarket_price_spain
+
+            if isinstance(ref_entry, dict):
+                if price_all is None:
+                    price_all = ref_entry.get("all")
+                if price_spain is None:
+                    price_spain = ref_entry.get("spain")
+            elif isinstance(ref_entry, (int, float)):
+                if price_all is None:
+                    price_all = float(ref_entry)
+
+            if price_all is None and offer.cardmarket_low_price is not None:
+                price_all = offer.cardmarket_low_price
+
+            offer.cardmarket_price_all = price_all
+            offer.cardmarket_price_spain = price_spain
+
+            market_price = price_spain if price_spain is not None else price_all
             if market_price is None:
                 continue
 
@@ -278,10 +365,11 @@ class DiscordAlertService:
             return 0
 
         logger.info(f"Dispatching {len(matching_embeds)} Discord alert(s)...")
-        header = f"🚨 **Delta Cards Scraper Alert**: Found {len(matching_embeds)} deal(s) matching criteria!"
+        emoji = (self.settings.alert_wild_offer_emoji or "").strip()
+        offer_msg = f"{emoji} ¡Ha aparecido una oferta salvaje!" if emoji else DEFAULT_OFFER_ALERT_MESSAGE
         ok = send_discord_webhook(
             webhook_url=webhook_url,
             embeds=matching_embeds,
-            content=header,
+            content=offer_msg,
         )
         return len(matching_embeds) if ok else 0
