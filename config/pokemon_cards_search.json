@@ -391,7 +391,7 @@
       ],
       "min_price": 1.0,
       "max_price": null,
-      "max_items": 50
+      "max_items": 200
     },
     {
       "id": "elite_trainer_box",

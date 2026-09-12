@@ -1,0 +1,17 @@
+[Unit]
+Description=Delta Cards - Scrape Single Cards (Wallapop)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/delta-cards
+Environment="PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/local/bin/uv run delta-cards scrape -p single_card
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

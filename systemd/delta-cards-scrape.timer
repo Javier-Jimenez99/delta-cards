@@ -1,0 +1,11 @@
+[Unit]
+Description=Delta Cards - Hourly Scraper Timer
+After=network-online.target
+
+[Timer]
+OnCalendar=*-*-* *:00:00
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target
