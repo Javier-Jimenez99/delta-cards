@@ -192,9 +192,81 @@ def test_build_discord_embed_with_llm_field():
     fields = embed["fields"]
     llm_field = [f for f in fields if "Verificación IA" in f["name"]]
     assert len(llm_field) == 1
-    assert "95%" in llm_field[0]["value"]
-    assert "19/20 confirmadas" in llm_field[0]["value"]
-    assert "Match Confirmado" in llm_field[0]["value"]
+    assert "🟩🟩🟩" in llm_field[0]["value"]
+    assert "El algoritmo confirma que la carta coincide con Cardmarket" in llm_field[0]["value"]
+    assert "💰 Ahorro" not in [f["name"] for f in fields]
+
+
+def test_build_discord_embed_llm_confidence_tiers():
+    """Verify the 3 confidence tiers: <33% (red), 33-66% (orange), >66% (green)."""
+    offer = OfferListing(
+        id="tier_test",
+        title="Test Card",
+        price=20.0,
+        product_type="single_card",
+        link="https://wallapop.com/item/tier_test",
+    )
+    cond = AlertConditionResult(
+        is_triggered=True,
+        savings_absolute=10.0,
+        savings_percentage=33.3,
+        offer_price=20.0,
+        market_price=30.0,
+        reason="Triggered",
+    )
+
+    # Tier 1: < 33% (< 6.6 checks out of 20, e.g. 5 checks = 25%)
+    res_low = LLMVerificationResult(
+        is_verified=False,
+        confidence_score=25.0,
+        confirmed_count=5,
+        total_questions=20,
+        verdict_summary="Low confidence",
+    )
+    embed_low = build_discord_embed(offer, cond, llm_verification=res_low)
+    val_low = [f for f in embed_low["fields"] if "Verificación IA" in f["name"]][0]["value"]
+    assert "🟥🟥🟥" in val_low
+    assert "El algoritmo no está seguro de si es una oferta real" in val_low
+
+    # Tier 2: Exactly 33% boundary (inclusive)
+    res_33 = {"confidence_score": 33.0, "is_verified": True}
+    embed_33 = build_discord_embed(offer, cond, llm_verification=res_33)
+    val_33 = [f for f in embed_33["fields"] if "Verificación IA" in f["name"]][0]["value"]
+    assert "🟧🟧🟧" in val_33
+    assert "El algoritmo detecta coincidencia parcial con Cardmarket; revisa los detalles" in val_33
+
+    # Tier 2: Mid-range (10 checks out of 20 = 50%)
+    res_mid = LLMVerificationResult(
+        is_verified=True,
+        confidence_score=50.0,
+        confirmed_count=10,
+        total_questions=20,
+        verdict_summary="Partial match",
+    )
+    embed_mid = build_discord_embed(offer, cond, llm_verification=res_mid)
+    val_mid = [f for f in embed_mid["fields"] if "Verificación IA" in f["name"]][0]["value"]
+    assert "🟧🟧🟧" in val_mid
+    assert "El algoritmo detecta coincidencia parcial con Cardmarket; revisa los detalles" in val_mid
+
+    # Tier 2: Exactly 66% boundary (inclusive)
+    res_66 = {"confidence_score": 66.0, "is_verified": True}
+    embed_66 = build_discord_embed(offer, cond, llm_verification=res_66)
+    val_66 = [f for f in embed_66["fields"] if "Verificación IA" in f["name"]][0]["value"]
+    assert "🟧🟧🟧" in val_66
+    assert "El algoritmo detecta coincidencia parcial con Cardmarket; revisa los detalles" in val_66
+
+    # Tier 3: > 66% (14 checks out of 20 = 70%)
+    res_high = LLMVerificationResult(
+        is_verified=True,
+        confidence_score=70.0,
+        confirmed_count=14,
+        total_questions=20,
+        verdict_summary="High confidence",
+    )
+    embed_high = build_discord_embed(offer, cond, llm_verification=res_high)
+    val_high = [f for f in embed_high["fields"] if "Verificación IA" in f["name"]][0]["value"]
+    assert "🟩🟩🟩" in val_high
+    assert "El algoritmo confirma que la carta coincide con Cardmarket" in val_high
 
 
 def test_discord_alert_service_suppresses_false_positives():
@@ -277,7 +349,7 @@ def test_discord_alert_service_dispatches_when_verified():
         embed_fields = embeds[0]["fields"]
         llm_field = [f for f in embed_fields if "Verificación IA" in f["name"]]
         assert len(llm_field) == 1
-        assert "90%" in llm_field[0]["value"]
+        assert "🟩🟩🟩" in llm_field[0]["value"]
 
 
 def test_llm_verifier_real_model_inference():

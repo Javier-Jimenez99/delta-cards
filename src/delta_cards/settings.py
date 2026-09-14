@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 from typing import Literal, Optional
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,6 +47,16 @@ class Settings(BaseSettings):
     alert_wild_offer_emoji: str = Field(
         default="<:pokeball_light:1548052080357412995>",
         description="Custom Discord emoji or unicode tag preceding wild offer message (e.g. <:pokeball_light:123456789>)",
+    )
+    time_between_offers: float = Field(
+        default=0.0,
+        validation_alias=AliasChoices(
+            "time_between_offers",
+            "alert_time_between_offers",
+            "delay_between_offers",
+            "alert_delay_between_offers",
+        ),
+        description="Delay in seconds between sending offer alerts to Discord to prevent flooding (default: 0)",
     )
 
     # Alert Service / Worker Settings

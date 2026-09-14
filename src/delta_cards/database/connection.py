@@ -60,7 +60,47 @@ def get_session(engine: Optional[Engine] = None) -> Generator[Session, None, Non
         yield session
 
 
+import logging
+from sqlalchemy import event, inspect, text
+
+logger = logging.getLogger(__name__)
+
+
 def init_db(engine: Optional[Engine] = None) -> None:
-    """Initializes database schema directly by creating all tables defined in SQLModel metadata."""
+    """Initializes database schema directly by creating all tables defined in SQLModel metadata.
+
+    Also automatically verifies and adds any newly introduced columns (e.g. alert_status)
+    to existing tables if they are missing from an already-created database.
+    """
     eng = engine or get_engine()
     SQLModel.metadata.create_all(eng)
+
+    try:
+        insp = inspect(eng)
+        table_names = insp.get_table_names()
+        if "WallapopOffers" in table_names:
+            existing_cols = {c["name"] for c in insp.get_columns("WallapopOffers")}
+            with eng.begin() as conn:
+                if "alert_status" not in existing_cols:
+                    conn.execute(text('ALTER TABLE "WallapopOffers" ADD COLUMN alert_status VARCHAR DEFAULT \'none\''))
+                    try:
+                        conn.execute(text('CREATE INDEX IF NOT EXISTS ix_WallapopOffers_alert_status ON "WallapopOffers" (alert_status)'))
+                    except Exception:
+                        pass
+                if "assigned_state" not in existing_cols:
+                    conn.execute(text('ALTER TABLE "WallapopOffers" ADD COLUMN assigned_state VARCHAR DEFAULT \'pending\''))
+                    try:
+                        conn.execute(text('CREATE INDEX IF NOT EXISTS ix_WallapopOffers_assigned_state ON "WallapopOffers" (assigned_state)'))
+                    except Exception:
+                        pass
+
+        if "CardmarketPrice" in table_names:
+            cp_cols = {c["name"] for c in insp.get_columns("CardmarketPrice")}
+            with eng.begin() as conn:
+                if "avg_price" not in cp_cols:
+                    conn.execute(text('ALTER TABLE "CardmarketPrice" ADD COLUMN avg_price FLOAT'))
+                if "trend_price" not in cp_cols:
+                    conn.execute(text('ALTER TABLE "CardmarketPrice" ADD COLUMN trend_price FLOAT'))
+    except Exception as exc:
+        logger.warning(f"Could not verify/migrate columns in init_db: {exc}")
+

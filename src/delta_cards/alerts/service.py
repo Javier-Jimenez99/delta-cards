@@ -1,6 +1,7 @@
 """Discord alerting service and condition evaluation for card deals."""
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 import httpx
@@ -153,12 +154,12 @@ def build_discord_embed(
     result: AlertConditionResult,
     llm_verification: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """Formats a deal offer into a renovated Discord embed object.
+    """Formats a deal offer into a Discord embed object.
 
     Structure:
     Deal: [title]
-    Wallapop price - Market Price of first spanish seller (🇪🇸) - market price of global less expensive seller (🌐)
-    Savings (positive number) - Type (Carta, Paquete, Caja, etc.)
+    Wallapop price - Market Price of average seller - Market price of low price seller
+    Type (Carta, Paquete, Caja, etc.) - Location
     Links to wallapop offer and to cardmarket product page.
     """
     # Ensure Wallapop link is normalized
@@ -179,14 +180,6 @@ def build_discord_embed(
     avg_str = f"{avg_price:.2f} €" if avg_price is not None else "N/A"
     low_str = f"{low_price:.2f} €" if low_price is not None else "N/A"
 
-    # Savings must be positive (e.g. 5.00 €)
-    savings_abs = abs(result.savings_absolute)
-    savings_pct = result.savings_percentage
-    if savings_pct > 0:
-        savings_str = f"**{savings_abs:.2f} €** ({savings_pct:.1f}%)"
-    else:
-        savings_str = f"**{savings_abs:.2f} €**"
-
     # Translated product category (Carta, Paquete, Caja, etc.)
     type_label = format_product_type(offer.product_type)
 
@@ -196,7 +189,6 @@ def build_discord_embed(
         {"name": "<:wallapop:1548103689477038080> Wallapop", "value": f"**{offer.price:.2f} €**", "inline": True},
         {"name": "<:cardmarket:1548103777750487056> Precio medio", "value": f"**{avg_str}**", "inline": True},
         {"name": "<:cardmarket:1548103777750487056> Precio mínimo", "value": f"**{low_str}**", "inline": True},
-        {"name": "💰 Ahorro", "value": savings_str, "inline": True},
         {"name": "📦 Tipo", "value": f"**{type_label}**", "inline": True},
         {"name": "📍 Ubicación", "value": f"**{location_str}**", "inline": True},
     ]
@@ -205,22 +197,48 @@ def build_discord_embed(
     if llm_verification:
         score = getattr(llm_verification, "confidence_score", None)
         if score is None and isinstance(llm_verification, dict):
-            score = llm_verification.get("confidence_score", 0.0)
+            score = llm_verification.get("confidence_score")
         confirmed = getattr(llm_verification, "confirmed_count", None)
         if confirmed is None and isinstance(llm_verification, dict):
-            confirmed = llm_verification.get("confirmed_count", 0)
-        summary = getattr(llm_verification, "verdict_summary", "")
-        if not summary and isinstance(llm_verification, dict):
-            summary = llm_verification.get("verdict_summary", "")
-        is_ver = getattr(llm_verification, "is_verified", True)
+            confirmed = llm_verification.get("confirmed_count")
+        total = getattr(llm_verification, "total_questions", 20)
+        if total is None and isinstance(llm_verification, dict):
+            total = llm_verification.get("total_questions", 20)
+        is_ver = getattr(llm_verification, "is_verified", None)
         if is_ver is None and isinstance(llm_verification, dict):
-            is_ver = llm_verification.get("is_verified", True)
+            is_ver = llm_verification.get("is_verified")
 
-        icon = "🤖" if is_ver else "⚠️"
-        score_val = f"{score:.0f}%" if score is not None else "N/A"
+        # Determine check pass percentage
+        if confirmed is not None and total and total > 0:
+            pass_pct = (confirmed / total) * 100.0
+        elif score is not None:
+            pass_pct = float(score)
+        else:
+            pass_pct = 0.0
+
+        # Hard veto overrides confidence
+        if is_ver is False and score is not None and score < pass_pct:
+            pass_pct = float(score)
+
+        if pass_pct > 66.0:
+            icon = "🤖"
+            value_msg = (
+                "Confianza: 🟩🟩🟩 El algoritmo confirma que la carta coincide con Cardmarket 🟩🟩🟩"
+            )
+        elif pass_pct >= 33.0:
+            icon = "⚠️"
+            value_msg = (
+                "Confianza: 🟧🟧🟧 El algoritmo detecta coincidencia parcial con Cardmarket; revisa los detalles 🟧🟧🟧"
+            )
+        else:
+            icon = "⚠️"
+            value_msg = (
+                "Confianza: 🟥🟥🟥 El algoritmo no está seguro de si es una oferta real 🟥🟥🟥"
+            )
+
         fields.append({
             "name": f"{icon} Verificación IA (LLM)",
-            "value": f"Confianza: **{score_val}** ({confirmed}/20 confirmadas) • *{summary}*",
+            "value": value_msg,
             "inline": False,
         })
 
@@ -258,6 +276,7 @@ def send_discord_webhook(
     embeds: List[Dict[str, Any]],
     content: Optional[str] = DEFAULT_OFFER_ALERT_MESSAGE,
     timeout: float = 10.0,
+    delay_between_offers: float = 0.0,
 ) -> bool:
     """Sends each offer embed as a separate notification message to Discord with alert text.
 
@@ -266,6 +285,7 @@ def send_discord_webhook(
         embeds: List of embed dictionaries to send.
         content: Message text displayed before each offer embed.
         timeout: HTTP request timeout in seconds.
+        delay_between_offers: Delay in seconds to pause between consecutive offer alerts (default: 0.0).
 
     Returns:
         True if all embeds were delivered successfully, False otherwise.
@@ -279,7 +299,13 @@ def send_discord_webhook(
 
     success = True
 
-    for embed in embeds:
+    for idx, embed in enumerate(embeds):
+        if idx > 0 and delay_between_offers > 0:
+            logger.info(
+                f"Pausing {delay_between_offers}s before sending next offer alert to prevent flooding..."
+            )
+            time.sleep(delay_between_offers)
+
         payload: Dict[str, Any] = {
             "username": "Delta Cards Alert",
             "embeds": [embed],
@@ -433,6 +459,7 @@ class DiscordAlertService:
             webhook_url=webhook_url,
             embeds=matching_embeds,
             content=offer_msg,
+            delay_between_offers=self.settings.time_between_offers,
         )
         return len(matching_embeds) if ok else 0
 
@@ -604,6 +631,7 @@ class AlertWorkerService:
                 webhook_url=webhook_url,
                 embeds=[embed],
                 content=offer_msg,
+                delay_between_offers=self.settings.time_between_offers,
             )
 
             if ok:

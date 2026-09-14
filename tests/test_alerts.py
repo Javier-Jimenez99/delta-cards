@@ -173,10 +173,8 @@ def test_build_discord_embed():
     assert "🇪🇸 ESP" not in fields_dict
     assert "🇪🇺 UE" not in fields_dict
 
-    # Row 2: Ahorro, Tipo, Ubicación
-    assert "💰 Ahorro" in fields_dict
-    assert "50.00 €" in fields_dict["💰 Ahorro"]
-    assert "-50.00" not in fields_dict["💰 Ahorro"]
+    # Row 2: Tipo, Ubicación (Ahorro removed)
+    assert "💰 Ahorro" not in fields_dict
 
     assert "📦 Tipo" in fields_dict
     assert fields_dict["📦 Tipo"] == "**Carta**"
@@ -234,9 +232,8 @@ def test_build_discord_embed_product_id_fallback():
     assert "🇪🇸 ESP" not in fields_dict
     assert "🇪🇺 UE" not in fields_dict
 
-    # Savings is positive
-    assert "200.00 €" in fields_dict["💰 Ahorro"]
-    assert "-200.00" not in fields_dict["💰 Ahorro"]
+    # Ahorro removed
+    assert "💰 Ahorro" not in fields_dict
 
     # Links row contains auto-generated Cardmarket URL with product ID and no emotes in link text
     links_val = fields_dict["🔗 Enlaces"]
@@ -343,3 +340,28 @@ def test_discord_alert_service_success():
         embeds = kwargs["embeds"]
         assert len(embeds) == 1
         assert "Gengar" in embeds[0]["title"]
+        assert kwargs["delay_between_offers"] == 0.0
+
+
+def test_send_discord_webhook_delay_between_offers():
+    """Verify that send_discord_webhook pauses between consecutive offer alerts when delay_between_offers > 0."""
+    embeds = [{"title": "Offer 1"}, {"title": "Offer 2"}, {"title": "Offer 3"}]
+    mock_resp = MagicMock()
+    mock_resp.status_code = 204
+
+    with patch("httpx.Client") as mock_client_cls, patch("time.sleep") as mock_sleep:
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_resp
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+
+        ok = send_discord_webhook(
+            "https://discord.com/api/webhooks/test",
+            embeds=embeds,
+            delay_between_offers=2.5,
+        )
+        assert ok is True
+        assert mock_client.post.call_count == 3
+        # Should sleep twice: once before embed 2, once before embed 3
+        assert mock_sleep.call_count == 2
+        mock_sleep.assert_called_with(2.5)
+

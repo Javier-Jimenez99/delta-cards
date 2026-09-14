@@ -179,9 +179,8 @@ def test_discord_alert_uses_precio_medio():
     assert "<:cardmarket:1548103777750487056> Precio mínimo" in fields
     assert "20.00 €" in fields["<:cardmarket:1548103777750487056> Precio mínimo"]
 
-    # Ensure Row 2 has Ahorro, Tipo, Ubicación
-    assert "💰 Ahorro" in fields
-    assert "15.00 €" in fields["💰 Ahorro"]
+    # Ensure Row 2 has Tipo, Ubicación (Ahorro removed)
+    assert "💰 Ahorro" not in fields
 
     assert "📦 Tipo" in fields
     assert "📍 Ubicación" in fields

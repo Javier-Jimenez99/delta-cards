@@ -5,6 +5,14 @@ from delta_cards.settings import Settings, get_settings
 from delta_cards.database.connection import get_db_url
 
 
+@pytest.fixture(autouse=True)
+def isolate_env(monkeypatch):
+    """Ensure host environment variables do not leak into settings tests."""
+    for field_name in Settings.model_fields.keys():
+        monkeypatch.delenv(field_name.upper(), raising=False)
+        monkeypatch.delenv(field_name, raising=False)
+
+
 def test_default_settings():
     """Verify default values when no environment variables are set."""
     settings = Settings(
@@ -22,6 +30,7 @@ def test_default_settings():
     assert settings.alert_min_saving_percentage is None
     assert settings.alert_min_saving_absolute is None
     assert settings.alert_condition_operator == "or"
+    assert settings.time_between_offers == 0.0
     assert settings.debug is False
 
 
@@ -33,6 +42,7 @@ def test_settings_from_environment(monkeypatch):
     monkeypatch.setenv("ALERT_MIN_SAVING_PERCENTAGE", "25.5")
     monkeypatch.setenv("ALERT_MIN_SAVING_ABSOLUTE", "15.0")
     monkeypatch.setenv("ALERT_CONDITION_OPERATOR", "and")
+    monkeypatch.setenv("TIME_BETWEEN_OFFERS", "3.5")
     monkeypatch.setenv("DEBUG", "true")
 
     get_settings.cache_clear()
@@ -44,16 +54,18 @@ def test_settings_from_environment(monkeypatch):
     assert settings.alert_min_saving_percentage == 25.5
     assert settings.alert_min_saving_absolute == 15.0
     assert settings.alert_condition_operator == "and"
+    assert settings.time_between_offers == 3.5
     assert settings.debug is True
 
 
 def test_settings_load_from_env_file(tmp_path):
-    """Verify that Settings can load alert thresholds from a .env file."""
+    """Verify that Settings can load alert thresholds and delays from a .env file."""
     env_file = tmp_path / ".env.test"
     env_file.write_text(
         "ALERT_MIN_SAVING_PERCENTAGE=30.0\n"
         "ALERT_MIN_SAVING_ABSOLUTE=20.0\n"
         "ALERT_CONDITION_OPERATOR=and\n"
+        "TIME_BETWEEN_OFFERS=4.5\n"
         "DISCORD_ALERTS_ENABLED=true\n",
         encoding="utf-8",
     )
@@ -62,6 +74,7 @@ def test_settings_load_from_env_file(tmp_path):
     assert settings.alert_min_saving_percentage == 30.0
     assert settings.alert_min_saving_absolute == 20.0
     assert settings.alert_condition_operator == "and"
+    assert settings.time_between_offers == 4.5
     assert settings.discord_alerts_enabled is True
 
 
