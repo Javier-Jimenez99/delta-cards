@@ -1,137 +1,90 @@
-"""Visual card isolation and deskewing using ONNX YOLO Oriented Bounding Box (OBB) and OpenCV."""
+"""Visual card boundary isolation using Adrihp06/TCGscanner-detector (ONNX YOLO).
+
+Performs direct, fast rectangular cropping of the physical card with zero complex
+rotation or perspective dewarping, feeding directly into the DINOv3 + USearch visual pipeline.
+"""
 
 import logging
 import os
-import shutil
 from typing import Optional, Tuple, Union
 
 import cv2
 import numpy as np
+from ultralytics import YOLO
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ONNX_REPO_ID = "AlecKarfonta/cardcaptor-v3"
-DEFAULT_ONNX_FILENAME = "onnx/cardcaptor_v3_best.onnx"
+DEFAULT_DETECTOR_REPO_ID = "Adrihp06/TCGscanner-detector"
+DEFAULT_ONNX_FILENAME = "riftbound_regions.onnx"
 
 
 class CardNotDetectedError(Exception):
     """Raised when no trading card can be detected with sufficient confidence."""
 
 
-def ensure_cardcaptor_onnx_model(model_path: Optional[str] = None) -> str:
-    """Ensures cardcaptor_v3_best.onnx exists locally, downloading from HF if necessary."""
+def ensure_detector_model(model_path: Optional[str] = None) -> str:
+    """Ensures the ONNX Adrihp06 detector model exists locally.
+
+    Returns:
+        Absolute path to the local ONNX model file.
+    """
     if model_path and os.path.isfile(model_path):
         return model_path
 
+    # Candidate paths in project and cache
     candidate_paths = [
-        os.path.join(os.getcwd(), "models", "onnx", "cardcaptor_v3_best.onnx"),
-        os.path.join(os.getcwd(), "models", "cardcaptor_v3_best.onnx"),
-        os.path.join(os.getcwd(), "onnx", "cardcaptor_v3_best.onnx"),
-        os.path.join(os.getcwd(), "data", "models", "onnx", "cardcaptor_v3_best.onnx"),
-        os.path.join(os.getcwd(), "data", "models", "cardcaptor_v3_best.onnx"),
-        os.path.expanduser("~/.cache/delta_cards/models/cardcaptor_v3_best.onnx"),
+        os.path.join(os.getcwd(), "models", "riftbound_regions.onnx"),
+        os.path.expanduser("~/.cache/delta_cards/models/riftbound_regions.onnx"),
     ]
     for p in candidate_paths:
-        if os.path.isfile(p) and os.path.getsize(p) > 10_000_000:
+        if os.path.isfile(p) and os.path.getsize(p) > 1_000_000:
             return p
 
-    dest_dir = os.path.join(os.getcwd(), "models", "onnx")
+    # Download from HuggingFace
+    dest_dir = os.path.join(os.getcwd(), "models")
     os.makedirs(dest_dir, exist_ok=True)
-    dest_path = os.path.join(dest_dir, "cardcaptor_v3_best.onnx")
+    dest_path = os.path.join(dest_dir, "riftbound_regions.onnx")
 
-    logger.info(f"Downloading {DEFAULT_ONNX_FILENAME} from HuggingFace ({DEFAULT_ONNX_REPO_ID})...")
+    logger.info(f"Downloading {DEFAULT_ONNX_FILENAME} from HuggingFace ({DEFAULT_DETECTOR_REPO_ID})...")
     from huggingface_hub import hf_hub_download
 
     downloaded = hf_hub_download(
-        repo_id=DEFAULT_ONNX_REPO_ID,
+        repo_id=DEFAULT_DETECTOR_REPO_ID,
         filename=DEFAULT_ONNX_FILENAME,
     )
+    import shutil
     shutil.copyfile(downloaded, dest_path)
     return dest_path
 
 
-def order_points(pts: np.ndarray) -> np.ndarray:
-    """Orders 4 points clockwise: top-left, top-right, bottom-right, bottom-left.
-
-    Args:
-        pts: NumPy array of shape (4, 2) containing (x, y) coordinates.
-
-    Returns:
-        NumPy array of shape (4, 2) in [TL, TR, BR, BL] order.
-    """
-    rect = np.zeros((4, 2), dtype="float32")
-
-    # Sum of coordinates: Top-left has smallest sum (x+y), bottom-right has largest sum
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]
-    rect[2] = pts[np.argmax(s)]
-
-    # Difference (y - x): Top-right has smallest diff, bottom-left has largest diff
-    diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)]
-    rect[3] = pts[np.argmax(diff)]
-
-    return rect
+# Backward compatibility alias
+ensure_cardcaptor_model = ensure_detector_model
+ensure_cardcaptor_onnx_model = ensure_detector_model
 
 
 class VisualCardDetector:
-    """Card detector and perspective rectification engine optimized for CPU execution.
+    """Card detector and direct rectangular cropper powered by Adrihp06/TCGscanner-detector.
 
-    Uses an optimized ONNX YOLOv11m OBB model (cardcaptor_v3_best.onnx) running via
-    onnxruntime with CPUExecutionProvider and multi-threading for maximum CPU performance,
-    with backwards compatibility for PyTorch (.pt) weights.
+    Localizes the primary trading card boundary on CPU in ~150-190ms and extracts a clean
+    rectangular crop directly for downstream embedding retrieval (USearch), with no
+    lossy or unstable perspective rotations.
     """
 
     def __init__(
         self,
         model_path: Optional[str] = None,
         conf_threshold: float = 0.25,
-        target_size: Tuple[int, int] = (750, 1050),
     ):
-        """Initializes the visual detector.
+        """Initializes the Adrihp06 YOLO card detector.
 
         Args:
-            model_path: Path to ONNX model (default: onnx/cardcaptor_v3_best.onnx) or PyTorch .pt model.
-            conf_threshold: Minimum detection confidence threshold (0.0 - 1.0).
-            target_size: Output resolution tuple (width, height) matching ~2.5x3.5 ratio.
+            model_path: Path to riftbound_regions.onnx (downloaded automatically if None).
+            conf_threshold: Minimum detection confidence threshold.
         """
         self.conf_threshold = conf_threshold
-        self.target_size = target_size
-
-        if model_path is None:
-            self.model_path = ensure_cardcaptor_onnx_model()
-        else:
-            self.model_path = model_path
-
-        if self.model_path.endswith(".onnx"):
-            self.is_onnx = True
-            logger.info(f"Loading ONNX card detector from '{self.model_path}' on CPU...")
-            import onnxruntime as ort
-
-            sess_opts = ort.SessionOptions()
-            sess_opts.intra_op_num_threads = os.cpu_count() or 4
-            sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-            self.session = ort.InferenceSession(
-                self.model_path,
-                sess_options=sess_opts,
-                providers=["CPUExecutionProvider"],
-            )
-            self.input_name = self.session.get_inputs()[0].name
-            input_shape = self.session.get_inputs()[0].shape
-            # Default to 1088 for cardcaptor_v3_best.onnx
-            self.target_dim = (
-                input_shape[2]
-                if len(input_shape) >= 3 and isinstance(input_shape[2], int)
-                else 1088
-            )
-            self.model = None
-        else:
-            self.is_onnx = False
-            logger.info(f"Loading YOLO PyTorch model '{self.model_path}' on CPU...")
-            from ultralytics import YOLO
-
-            self.model = YOLO(self.model_path)
-            self.session = None
+        self.model_path = ensure_detector_model(model_path)
+        logger.info(f"Loading Adrihp06 ONNX card detector from '{self.model_path}' on CPU...")
+        self.model = YOLO(self.model_path, task="detect")
 
     def _load_image(self, image_source: Union[str, bytes, np.ndarray]) -> np.ndarray:
         """Loads and converts various input image formats into a BGR NumPy array."""
@@ -172,256 +125,111 @@ class VisualCardDetector:
 
         raise TypeError(f"Unsupported image source type: {type(image_source)}")
 
-    def _detect_onnx(self, image: np.ndarray) -> Optional[np.ndarray]:
-        """Runs ONNX inference on CPU and extracts rotated bounding box 4-corners."""
-        h_orig, w_orig = image.shape[:2]
-        target_dim = self.target_dim
+    def detect_card_bbox(self, image: np.ndarray) -> Optional[Tuple[int, int, int, int, float]]:
+        """Detects the primary card bounding box using Adrihp06 detector.
 
-        # Letterbox image with aspect ratio preservation
-        scale = min(target_dim / h_orig, target_dim / w_orig)
-        nw, nh = int(w_orig * scale), int(h_orig * scale)
-        resized = cv2.resize(image, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        Args:
+            image: BGR NumPy array.
 
-        pad_img = np.full((target_dim, target_dim, 3), 114, dtype=np.uint8)
-        px = (target_dim - nw) // 2
-        py = (target_dim - nh) // 2
-        pad_img[py : py + nh, px : px + nw] = resized
+        Returns:
+            Tuple of (x1, y1, x2, y2, confidence) clamped to image boundaries, or None.
+        """
+        h, w = image.shape[:2]
+        results = self.model(image, conf=self.conf_threshold, verbose=False)[0]
 
-        # BGR -> RGB, float32, normalize [0, 1], NCHW
-        blob = cv2.cvtColor(pad_img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-        blob = np.transpose(blob, (2, 0, 1))[np.newaxis, ...]
-
-        outputs = self.session.run(None, {self.input_name: blob})
-        dets = outputs[0][0]  # shape (300, 7): [cx, cy, w, h, conf, cls, angle]
-        if len(dets) == 0:
+        if results.boxes is None or len(results.boxes) == 0:
             return None
 
-        # Filter by confidence threshold and realistic trading card aspect ratio (~0.714)
+        # Extract all valid candidate boxes
         candidates = []
-        for d in dets:
-            cx, cy, w, h, conf, cls, angle = d
-            if conf < self.conf_threshold or w <= 0 or h <= 0:
+        for b in results.boxes:
+            conf = float(b.conf[0]) if hasattr(b.conf, "__len__") else float(b.conf)
+            xyxy = b.xyxy[0].cpu().numpy().tolist()
+            x1 = max(0, min(w - 1, int(round(xyxy[0]))))
+            y1 = max(0, min(h - 1, int(round(xyxy[1]))))
+            x2 = max(0, min(w, int(round(xyxy[2]))))
+            y2 = max(0, min(h, int(round(xyxy[3]))))
+            box_w = x2 - x1
+            box_h = y2 - y1
+
+            if box_w <= 10 or box_h <= 10:
                 continue
-            ar = min(w, h) / max(w, h)
-            # Trading cards have standard aspect ratio between 0.60 and 0.84
-            if 0.58 <= ar <= 0.84:
-                candidates.append((conf, d))
+
+            area = box_w * box_h
+            candidates.append((conf, area, (x1, y1, x2, y2)))
 
         if not candidates:
-            # If no candidates meet strict aspect ratio, accept only high-confidence (>= 0.70)
-            high_conf = [d for d in dets if d[4] >= 0.70 and d[2] > 0 and d[3] > 0]
-            if not high_conf:
-                return None
-            best_det = max(high_conf, key=lambda x: x[4])
-        else:
-            best_det = max(candidates, key=lambda x: x[0])[1]
-
-        cx, cy, w, h, conf, cls, angle = best_det
-
-        # Reconstruct corners using standard YOLO OBB vector formulation
-        cos_val = np.cos(angle)
-        sin_val = np.sin(angle)
-        vec1 = np.array([w / 2.0 * cos_val, w / 2.0 * sin_val], dtype=np.float32)
-        vec2 = np.array([-h / 2.0 * sin_val, h / 2.0 * cos_val], dtype=np.float32)
-        ctr = np.array([cx, cy], dtype=np.float32)
-        pt1 = ctr + vec1 + vec2
-        pt2 = ctr + vec1 - vec2
-        pt3 = ctr - vec1 - vec2
-        pt4 = ctr - vec1 + vec2
-        canvas_pts = np.stack([pt1, pt2, pt3, pt4], axis=0)
-
-        # Unpad and scale back to original image coordinates
-        orig_pts = (canvas_pts - np.array([px, py], dtype=np.float32)) / scale
-        orig_pts[:, 0] = np.clip(orig_pts[:, 0], 0, w_orig)
-        orig_pts[:, 1] = np.clip(orig_pts[:, 1], 0, h_orig)
-
-        return orig_pts.astype(np.float32)
-
-    def _extract_obb_corners(self, results) -> Optional[np.ndarray]:
-        """Extracts 4-corner coordinates of the primary card detection from YOLO OBB PyTorch results."""
-        if not results or len(results) == 0:
             return None
 
-        res = results[0]
-        obb = getattr(res, "obb", None)
-        if obb is None or len(obb) == 0:
-            return None
+        # Choose the best candidate: prefer high-confidence box, and if multiple, largest card area
+        max_conf = max(c[0] for c in candidates)
+        # Candidates within 0.15 of max confidence
+        strong_candidates = [c for c in candidates if c[0] >= max_conf - 0.15]
+        best_candidate = max(strong_candidates, key=lambda c: c[1])
 
-        # Filter by confidence threshold
-        confs = obb.conf.cpu().numpy()
-        valid_indices = np.where(confs >= self.conf_threshold)[0]
-        if len(valid_indices) == 0:
-            return None
-
-        # Choose the detection with highest confidence
-        best_idx = valid_indices[np.argmax(confs[valid_indices])]
-
-        # xyxyxyxy shape: (N, 4, 2)
-        if hasattr(obb, "xyxyxyxy"):
-            corners = obb.xyxyxyxy[best_idx].cpu().numpy()
-            if corners.shape == (4, 2):
-                return corners.astype("float32")
-
-        # Fallback to xywhr if xyxyxyxy is not directly present
-        if hasattr(obb, "xywhr"):
-            xywhr = obb.xywhr[best_idx].cpu().numpy()
-            cx, cy, w, h, angle_rad = xywhr
-            angle_deg = np.degrees(angle_rad)
-            box = cv2.boxPoints(((cx, cy), (w, h), angle_deg))
-            return np.array(box, dtype="float32")
-
-        return None
-
-    def _find_card_contour_fallback(self, image: np.ndarray) -> Optional[np.ndarray]:
-        """High-precision OpenCV contour fallback to detect rectangular card quadrilateral.
-
-        Used when model lacks a detection or for edge cases.
-        """
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-
-        # Multi-scale edge detection
-        edges = cv2.Canny(blurred, 30, 150)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        edges = cv2.dilate(edges, kernel, iterations=1)
-
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None
-
-        image_area = image.shape[0] * image.shape[1]
-        best_quad = None
-        max_area = 0.0
-
-        for cnt in sorted(contours, key=cv2.contourArea, reverse=True)[:15]:
-            area = cv2.contourArea(cnt)
-            # A card must occupy a reasonable portion of marketplace image (>= 5% and <= 98%)
-            if area < (0.05 * image_area) or area > (0.98 * image_area):
-                continue
-
-            peri = cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
-
-            if len(approx) == 4:
-                pts = approx.reshape(4, 2).astype("float32")
-                # Validate aspect ratio (~0.5 to 0.88)
-                rect = order_points(pts)
-                width_a = np.linalg.norm(rect[1] - rect[0])
-                width_b = np.linalg.norm(rect[2] - rect[3])
-                max_w = max(width_a, width_b)
-
-                height_a = np.linalg.norm(rect[3] - rect[0])
-                height_b = np.linalg.norm(rect[2] - rect[1])
-                max_h = max(height_a, height_b)
-
-                if max_w > 0 and max_h > 0:
-                    ar = min(max_w, max_h) / max(max_w, max_h)
-                    # Standard Pokemon card ratio is 2.5 / 3.5 = ~0.714
-                    if 0.50 <= ar <= 0.88 and area > max_area:
-                        max_area = area
-                        best_quad = pts
-
-        return best_quad
-
-    def rectify_card(self, image: np.ndarray, corners: np.ndarray) -> np.ndarray:
-        """Applies perspective transformation to rectify and deskew the card upright.
-
-        Args:
-            image: Source BGR image.
-            corners: (4, 2) array of quadrilateral corner coordinates.
-
-        Returns:
-            Upright rectified card image with target dimensions.
-        """
-        rect = order_points(corners)
-        target_w, target_h = self.target_size
-
-        # Compute widths and heights
-        width_top = np.linalg.norm(rect[1] - rect[0])
-        width_bottom = np.linalg.norm(rect[2] - rect[3])
-        height_left = np.linalg.norm(rect[3] - rect[0])
-        height_right = np.linalg.norm(rect[2] - rect[1])
-
-        avg_w = (width_top + width_bottom) / 2.0
-        avg_h = (height_left + height_right) / 2.0
-
-        # Destination coordinates in standard portrait orientation
-        dst = np.array(
-            [
-                [0, 0],
-                [target_w - 1, 0],
-                [target_w - 1, target_h - 1],
-                [0, target_h - 1],
-            ],
-            dtype="float32",
-        )
-
-        m = cv2.getPerspectiveTransform(rect, dst)
-        warped = cv2.warpPerspective(
-            image, m, (target_w, target_h), flags=cv2.INTER_LANCZOS4
-        )
-
-        # If detected region was sideways (landscape), rotate upright
-        if avg_w > avg_h:
-            warped = cv2.rotate(warped, cv2.ROTATE_90_CLOCKWISE)
-            warped = cv2.resize(
-                warped, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4
-            )
-
-        return warped
+        x1, y1, x2, y2 = best_candidate[2]
+        return (x1, y1, x2, y2, best_candidate[0])
 
     def isolate_card(self, image_source: Union[str, bytes, np.ndarray]) -> np.ndarray:
-        """Isolates, crops, and deskews the primary card upright to standard aspect ratio.
+        """Isolates and crops the card directly without rotation or perspective transforms.
 
         Args:
-            image_source: Image filepath, raw image bytes, or NumPy BGR array.
+            image_source: Image path, bytes, or BGR array.
 
         Returns:
-            Rectified card image as a NumPy array (BGR).
+            Cropped card image as a BGR NumPy array.
 
         Raises:
             CardNotDetectedError: If no card is detected with sufficient confidence.
         """
         image = self._load_image(image_source)
-
-        corners = None
-        # 1. Primary detection via ONNX or PyTorch
-        if self.is_onnx:
-            try:
-                corners = self._detect_onnx(image)
-            except Exception as exc:
-                logger.warning(
-                    f"ONNX detector inference error: {exc}. Trying fallback detector."
-                )
-                corners = None
-        else:
-            try:
-                results = self.model.predict(
-                    image,
-                    device="cpu",
-                    verbose=False,
-                    conf=self.conf_threshold,
-                )
-                corners = self._extract_obb_corners(results)
-            except Exception as exc:
-                logger.warning(
-                    f"YOLO OBB inference error: {exc}. Trying fallback detector."
-                )
-                corners = None
-
-        # 2. If no corners detected, try high-precision contour fallback
-        if corners is None:
-            corners = self._find_card_contour_fallback(image)
-
-        # 3. If still no card detected, raise custom exception
-        if corners is None:
+        bbox = self.detect_card_bbox(image)
+        if bbox is None:
             raise CardNotDetectedError(
-                "card boundary contours not detected with sufficient confidence"
+                f"No trading card detected with confidence >= {self.conf_threshold}"
             )
 
-        # 4. Rectify and deskew upright
-        rectified = self.rectify_card(image, corners)
-        return rectified
+        x1, y1, x2, y2, _ = bbox
+        card_crop = image[y1:y2, x1:x2].copy()
+        return card_crop
+
+    def isolate_card_with_debug(
+        self, image_source: Union[str, bytes, np.ndarray]
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Isolates the card and produces an annotated original image for debugging/UI.
+
+        Args:
+            image_source: Image path, bytes, or BGR array.
+
+        Returns:
+            Tuple of (card_crop, annotated_original_image).
+        """
+        image = self._load_image(image_source)
+        bbox = self.detect_card_bbox(image)
+        if bbox is None:
+            raise CardNotDetectedError(
+                f"No trading card detected with confidence >= {self.conf_threshold}"
+            )
+
+        x1, y1, x2, y2, conf = bbox
+        card_crop = image[y1:y2, x1:x2].copy()
+
+        # Draw green bounding box on copy of original
+        annotated = image.copy()
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 3)
+        label = f"Card {conf:.2f}"
+        cv2.putText(
+            annotated,
+            label,
+            (x1, max(25, y1 - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 255, 0),
+            2,
+            cv2.LINE_AA,
+        )
+
+        return card_crop, annotated
 
 
 def isolate_card(
@@ -429,6 +237,6 @@ def isolate_card(
     model_path: Optional[str] = None,
     conf_threshold: float = 0.25,
 ) -> np.ndarray:
-    """Convenience function to isolate a card using the VisualCardDetector."""
+    """Convenience function to isolate a card using VisualCardDetector."""
     detector = VisualCardDetector(model_path=model_path, conf_threshold=conf_threshold)
     return detector.isolate_card(image_source)

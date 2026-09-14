@@ -1,23 +1,30 @@
 """Pokémon Trading Card Game (TCG) visual recognition, OCR, and live resolution package."""
 
-from .entity_parser import EntityParser, ExtractedCardMetadata, parse_listing
-from .ocr_reader import CardOCRReader, extract_text
+from .card_matcher import CardTextMatcher
+from .card_ocr import CardOCR, CardOCRResult
+from .card_ocr_cache import CandidateOCRCache
+from .card_text_service import CardTextService
+from .dinov3_embedder import DINOv3Embedder
+from .llm_verifier import LLMCardVerifier, LLMVerificationResult, get_llm_verifier
 from .pipeline import CardRecognitionPipeline, process_card_listing
-from .tcgdex_resolver import TCGDexResolver, build_cardmarket_url, resolve_card
+from .vector_index import MultiLanguageCardIndex, USearchCardIndex
 from .visual_detector import CardNotDetectedError, VisualCardDetector, isolate_card
 
 __all__ = [
     "VisualCardDetector",
     "CardNotDetectedError",
     "isolate_card",
-    "CardOCRReader",
-    "extract_text",
-    "EntityParser",
-    "ExtractedCardMetadata",
-    "parse_listing",
-    "TCGDexResolver",
-    "resolve_card",
-    "build_cardmarket_url",
+    "DINOv3Embedder",
+    "USearchCardIndex",
+    "MultiLanguageCardIndex",
+    "CardOCR",
+    "CardOCRResult",
+    "CandidateOCRCache",
+    "CardTextService",
+    "CardTextMatcher",
     "CardRecognitionPipeline",
     "process_card_listing",
+    "LLMCardVerifier",
+    "LLMVerificationResult",
+    "get_llm_verifier",
 ]

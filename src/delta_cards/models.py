@@ -138,4 +138,5 @@ class OfferListing(BaseModel):
     cardmarket_price_all: Optional[float] = None
     tcgdex_id: Optional[str] = None
     assigned_state: str = "pending"
+    alert_status: str = "none"
 

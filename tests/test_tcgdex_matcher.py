@@ -13,10 +13,10 @@ from delta_cards.database.repository import (
     update_offer_tcgdex,
     get_unassigned_card_offers,
 )
-from delta_cards.recognition.entity_parser import EntityParser, ExtractedCardMetadata
-from delta_cards.recognition.tcgdex_resolver import build_cardmarket_url
+from delta_cards.recognition.card_ocr import CardOCR
 from delta_cards.recognition.pipeline import CardRecognitionPipeline
 from delta_cards.tcgdex.assigner import (
+    build_cardmarket_url,
     is_card_offer,
     assign_tcgdex_to_offers,
     enrich_card_offers_in_db,
@@ -48,17 +48,12 @@ def test_is_card_offer_strict_filtering():
     assert is_card_offer("single_card", title="Pikachu 057/191 Chispas Fulgurantes") is True
 
 
-def test_deterministic_card_extraction():
-    """Verifies fast-path deterministic extraction of card number and set information."""
-    parser = EntityParser()
-    extracted = parser.try_strict_deterministic_extraction(
-        ocr_text="",
-        seller_title="Carta Pokemon Charizard VMAX 020/189 Holo Original",
-        seller_description="",
-    )
-    assert extracted is not None
-    assert extracted.collector_number == "020/189"
-    assert "charizard" in extracted.card_name.lower()
+def test_card_ocr_fraction_extraction():
+    """Verifies CardOCR extraction of card number and fractions."""
+    ocr = CardOCR()
+    fractions = ocr._extract_fractions("Carta Pokemon Charizard VMAX 020/189 Holo Original")
+    assert len(fractions) > 0
+    assert fractions[0][2] == "020/189"
 
 
 def test_build_cardmarket_url():
