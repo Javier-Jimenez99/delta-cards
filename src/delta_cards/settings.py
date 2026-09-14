@@ -65,8 +65,8 @@ class Settings(BaseSettings):
         description="Interval in minutes between periodic alert dispatches (default: 30 minutes)",
     )
     alert_dispatch_interval_seconds: int = Field(
-        default=1800,
-        description="Interval in seconds between periodic alert dispatches (default: 1800s / 30m)",
+        default=30,
+        description="Interval in seconds between worker queue checks when no deals are pending (default: 30s)",
     )
 
     # Debug Mode: Controls alerting on previously saved database offers

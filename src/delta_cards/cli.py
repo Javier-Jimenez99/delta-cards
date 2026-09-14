@@ -177,7 +177,7 @@ def parse_args(args: Optional[list] = None) -> argparse.Namespace:
 
 
 def setup_logging(verbose: bool) -> None:
-    log_level = logging.DEBUG if verbose else logging.WARNING
+    log_level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=log_level,
         format="%(message)s",
@@ -192,7 +192,7 @@ def setup_logging(verbose: bool) -> None:
         ],
     )
     if not verbose:
-        for noisy in ["delta_cards", "wallapy", "httpx", "httpcore", "urllib3", "asyncio"]:
+        for noisy in ["wallapy", "httpx", "httpcore", "urllib3", "asyncio"]:
             logging.getLogger(noisy).setLevel(logging.WARNING)
 
 

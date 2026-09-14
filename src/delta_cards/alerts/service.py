@@ -193,6 +193,12 @@ def build_discord_embed(
         {"name": "📍 Ubicación", "value": f"**{location_str}**", "inline": True},
     ]
 
+    # Enlaces a la oferta en Wallapop y a la página de Cardmarket
+    links = [f"[Oferta en Wallapop]({wallapop_url})"]
+    if cardmarket_url:
+        links.append(f"[Producto en Cardmarket]({cardmarket_url})")
+    links_str = " • ".join(links)
+
     # LLM False-Positive Verification Field
     if llm_verification:
         score = getattr(llm_verification, "confidence_score", None)
@@ -217,45 +223,29 @@ def build_discord_embed(
             pass_pct = 0.0
 
         # Hard veto overrides confidence
-        if is_ver is False and score is not None and score < pass_pct:
-            pass_pct = float(score)
-
-        if pass_pct > 66.0:
-            icon = "🤖"
-            value_msg = (
-                "Confianza: 🟩🟩🟩 El algoritmo confirma que la carta coincide con Cardmarket 🟩🟩🟩"
-            )
-        elif pass_pct >= 33.0:
-            icon = "⚠️"
-            value_msg = (
-                "Confianza: 🟧🟧🟧 El algoritmo detecta coincidencia parcial con Cardmarket; revisa los detalles 🟧🟧🟧"
-            )
+        if pass_pct >= 67.0:
+            value_msg = f"**{round(pass_pct)}%** ✅"
+        elif pass_pct <= 33.0:
+            value_msg = f"**{round(pass_pct)}%** ❌"
         else:
-            icon = "⚠️"
-            value_msg = (
-                "Confianza: 🟥🟥🟥 El algoritmo no está seguro de si es una oferta real 🟥🟥🟥"
-            )
+            value_msg = f"**{round(pass_pct)}%** ⚠️"
 
         fields.append({
-            "name": f"{icon} Verificación IA (LLM)",
+            "name": "🤖 Verificación IA",
             "value": value_msg,
-            "inline": False,
+            "inline": True,
         })
-
-    # Enlaces a la oferta en Wallapop y a la página de Cardmarket
-    links = [f"[Oferta en Wallapop]({wallapop_url})"]
-    if cardmarket_url:
-        links.append(f"[Producto en Cardmarket]({cardmarket_url})")
-
-    fields.append({
-        "name": "🔗 Enlaces",
-        "value": " • ".join(links),
-        "inline": False,
-    })
+    else:
+        fields.append({
+            "name": "🔗 Enlaces",
+            "value": links_str,
+            "inline": True,
+        })
 
     embed: Dict[str, Any] = {
         "title": f"Oferta: {offer.title[:200]}",
         "url": wallapop_url,
+        "description": links_str,
         "color": 0x2ECC71,  # Emerald Green
         "fields": fields,
         "footer": {"text": "Alerta de ofertas Delta Cards"},
@@ -666,6 +656,14 @@ class AlertWorkerService:
                 sent_offer = self.dispatch_one_pending_alert()
                 if sent_offer:
                     logger.info(f"Dispatched deal: {sent_offer.title[:40]} ({sent_offer.price:.2f}€)")
+                    if once:
+                        break
+                    # If an offer was dispatched, check for the next pending deal after delay
+                    delay = self.settings.time_between_offers
+                    if delay > 0:
+                        logger.info(f"Waiting {delay}s before checking next pending deal...")
+                        time.sleep(delay)
+                    continue
                 else:
                     logger.info("No pending deal dispatched in this cycle.")
             except Exception as exc:
@@ -675,9 +673,11 @@ class AlertWorkerService:
                 logger.info("Exiting AlertWorkerService (--once specified).")
                 break
 
-            logger.info(f"Alert worker sleeping for {interval}s (Ctrl+C to stop)...")
+            # When queue is empty, poll every 30s (or custom interval if specified on CLI)
+            poll_interval = interval_seconds if interval_seconds is not None else min(interval, 30)
+            logger.info(f"No pending deals. Alert worker sleeping for {poll_interval}s before next check (Ctrl+C to stop)...")
             try:
-                time.sleep(interval)
+                time.sleep(poll_interval)
             except KeyboardInterrupt:
                 logger.info("Alert worker stopped by user (KeyboardInterrupt).")
                 break

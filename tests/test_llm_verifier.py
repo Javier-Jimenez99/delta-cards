@@ -190,15 +190,17 @@ def test_build_discord_embed_with_llm_field():
     embed = build_discord_embed(offer, cond, llm_verification=llm_res)
 
     fields = embed["fields"]
+    assert len(fields) == 6  # 2 rows of 3 columns
+    assert all(f.get("inline") is True for f in fields)
     llm_field = [f for f in fields if "Verificación IA" in f["name"]]
     assert len(llm_field) == 1
-    assert "🟩🟩🟩" in llm_field[0]["value"]
-    assert "El algoritmo confirma que la carta coincide con Cardmarket" in llm_field[0]["value"]
+    assert "✅" in llm_field[0]["value"]
+    assert "95%" in llm_field[0]["value"]
     assert "💰 Ahorro" not in [f["name"] for f in fields]
 
 
 def test_build_discord_embed_llm_confidence_tiers():
-    """Verify the 3 confidence tiers: <33% (red), 33-66% (orange), >66% (green)."""
+    """Verify the 3 confidence tiers: <=33% (red X), 34-66% (warning), >=67% (green check)."""
     offer = OfferListing(
         id="tier_test",
         title="Test Card",
@@ -215,7 +217,7 @@ def test_build_discord_embed_llm_confidence_tiers():
         reason="Triggered",
     )
 
-    # Tier 1: < 33% (< 6.6 checks out of 20, e.g. 5 checks = 25%)
+    # Tier 1: <= 33% (< 6.6 checks out of 20, e.g. 5 checks = 25%)
     res_low = LLMVerificationResult(
         is_verified=False,
         confidence_score=25.0,
@@ -225,15 +227,15 @@ def test_build_discord_embed_llm_confidence_tiers():
     )
     embed_low = build_discord_embed(offer, cond, llm_verification=res_low)
     val_low = [f for f in embed_low["fields"] if "Verificación IA" in f["name"]][0]["value"]
-    assert "🟥🟥🟥" in val_low
-    assert "El algoritmo no está seguro de si es una oferta real" in val_low
+    assert "❌" in val_low
+    assert "25%" in val_low
 
-    # Tier 2: Exactly 33% boundary (inclusive)
+    # Tier 1: Exactly 33% boundary (inclusive)
     res_33 = {"confidence_score": 33.0, "is_verified": True}
     embed_33 = build_discord_embed(offer, cond, llm_verification=res_33)
     val_33 = [f for f in embed_33["fields"] if "Verificación IA" in f["name"]][0]["value"]
-    assert "🟧🟧🟧" in val_33
-    assert "El algoritmo detecta coincidencia parcial con Cardmarket; revisa los detalles" in val_33
+    assert "❌" in val_33
+    assert "33%" in val_33
 
     # Tier 2: Mid-range (10 checks out of 20 = 50%)
     res_mid = LLMVerificationResult(
@@ -245,17 +247,17 @@ def test_build_discord_embed_llm_confidence_tiers():
     )
     embed_mid = build_discord_embed(offer, cond, llm_verification=res_mid)
     val_mid = [f for f in embed_mid["fields"] if "Verificación IA" in f["name"]][0]["value"]
-    assert "🟧🟧🟧" in val_mid
-    assert "El algoritmo detecta coincidencia parcial con Cardmarket; revisa los detalles" in val_mid
+    assert "⚠️" in val_mid
+    assert "50%" in val_mid
 
     # Tier 2: Exactly 66% boundary (inclusive)
     res_66 = {"confidence_score": 66.0, "is_verified": True}
     embed_66 = build_discord_embed(offer, cond, llm_verification=res_66)
     val_66 = [f for f in embed_66["fields"] if "Verificación IA" in f["name"]][0]["value"]
-    assert "🟧🟧🟧" in val_66
-    assert "El algoritmo detecta coincidencia parcial con Cardmarket; revisa los detalles" in val_66
+    assert "⚠️" in val_66
+    assert "66%" in val_66
 
-    # Tier 3: > 66% (14 checks out of 20 = 70%)
+    # Tier 3: >= 67% (14 checks out of 20 = 70%)
     res_high = LLMVerificationResult(
         is_verified=True,
         confidence_score=70.0,
@@ -265,8 +267,8 @@ def test_build_discord_embed_llm_confidence_tiers():
     )
     embed_high = build_discord_embed(offer, cond, llm_verification=res_high)
     val_high = [f for f in embed_high["fields"] if "Verificación IA" in f["name"]][0]["value"]
-    assert "🟩🟩🟩" in val_high
-    assert "El algoritmo confirma que la carta coincide con Cardmarket" in val_high
+    assert "✅" in val_high
+    assert "70%" in val_high
 
 
 def test_discord_alert_service_suppresses_false_positives():
@@ -349,7 +351,7 @@ def test_discord_alert_service_dispatches_when_verified():
         embed_fields = embeds[0]["fields"]
         llm_field = [f for f in embed_fields if "Verificación IA" in f["name"]]
         assert len(llm_field) == 1
-        assert "🟩🟩🟩" in llm_field[0]["value"]
+        assert "✅" in llm_field[0]["value"]
 
 
 def test_llm_verifier_real_model_inference():
