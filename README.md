@@ -135,48 +135,135 @@ You can customize searches by editing `config/pokemon_cards_search.json` or prov
 
 ---
 
-## 💻 CLI Usage
+## 💻 CLI Usage & Architecture
 
-Delta Cards provides two decoupled commands that can run independently and concurrently, alongside a unified all-in-one command:
+Delta Cards is built as a decoupled pipeline with **three independent services** that communicate through a shared database, alongside a unified all-in-one command:
 
-### 1. Scrape Offers (`delta-cards scrape`)
-Fetches listings from Wallapop and stores them in the database and JSON/CSV output files. Fast execution with zero OCR/AI overhead:
+### 1. Scraper Service (`delta-cards scrape`)
+Fetches listings from Wallapop and stores them in the database (`WallapopOffers` table with `assigned_state = 'pending'`) and optional JSON/CSV files. Runs fast with zero OCR/AI overhead:
 ```bash
 # Run a single scrape cycle
 uv run delta-cards scrape -p single_card
 
-# Run scraper in continuous loop mode (e.g. polls every 5 minutes)
+# Run scraper continuously in loop mode (e.g. polls every 5 minutes)
 uv run delta-cards scrape --loop --interval 300
 ```
 *(Also available as standalone binary: `uv run delta-cards-scrape`)*
 
-### 2. Card Assigner & Deal Hunter (`delta-cards assign`)
-Persistent consumer worker that stays **always on waiting for offers**. It continuously polls the database for new unassigned single cards, passes them through the AI recognition pipeline (YOLOv8 + OCR + LLM fallback), matches official TCGdex/Cardmarket IDs, checks Cardmarket prices, and sends Discord deal alerts:
+### 2. Card Assigner & Pricing Service (`delta-cards assign`)
+Persistent consumer worker that stays **always on waiting for offers**. It polls the database for unassigned listings, runs the vision & AI pipeline (YOLOv8 card detection, DINOv3 + USearch similarity search, RapidOCR, and fuzzy matching), retrieves live Cardmarket/TCGdex market prices (`--scrape-prices`), and flags potential deals (`is_deal = True`):
 ```bash
-# Starts the persistent worker (polls DB every 30 seconds by default):
+# Starts the continuous worker (polls DB every 30s by default):
 uv run delta-cards assign --scrape-prices
 
 # Customize polling interval (e.g. check every 15 seconds):
 uv run delta-cards assign --interval 15 --scrape-prices
 
-# Or run just once for the current batch and exit immediately:
+# Or process current unassigned batch once and exit:
 uv run delta-cards assign --once --scrape-prices
 ```
 *(Also available as standalone binary: `uv run delta-cards-assign`)*
 
-### 3. Running Scraper and Assigner in Parallel
-Because the Assigner is always on waiting for incoming offers, the Scraper can be triggered at any time (e.g. on demand or via a periodic cron/timer):
-- **Worker (Always On)**: `uv run delta-cards assign --scrape-prices`
-- **Scraper (Triggered on demand or via cron)**: `uv run delta-cards scrape -p single_card`
-
-### 4. Unified All-in-One Pipeline (`delta-cards`)
-Runs the complete sequential flow (scrape -> assign -> scrape prices -> alert deals):
+### 3. Alert Dispatcher Service (`delta-cards alerts`)
+Decoupled worker that scans the database for pending deal opportunities (`alert_status = 'pending'`). It passes candidates through an LLM verifier to prevent false positives (e.g., card lots, proxies, damaged cards) and dispatches rich notifications to your configured Discord webhook:
 ```bash
-uv run delta-cards
+# Starts the continuous alert worker:
+uv run delta-cards alerts
+
+# Run once and exit:
+uv run delta-cards alerts --once
+
+# Send a test alert to verify Discord webhook connectivity:
+uv run delta-cards alerts --test-discord
+```
+*(Also available as standalone binary: `uv run delta-cards-alert`)*
+
+### 4. Running in the Background (Daemons via `nohup`)
+To run all three services in the background without keeping terminals open:
+```bash
+nohup uv run delta-cards scrape --loop > scraper.log 2>&1 &
+nohup uv run delta-cards assign --scrape-prices > assign.log 2>&1 &
+nohup uv run delta-cards alerts > alerts.log 2>&1 &
+```
+Monitor them anytime with `tail -f <service>.log` or inspect running processes with `ps aux | grep delta-cards`.
+
+### 5. Unified All-in-One Command (`delta-cards`)
+Runs the complete sequential flow end-to-end (scrape -> assign -> price -> alert):
+```bash
+uv run delta-cards --scrape-prices
 uv run delta-cards --limit 10 --scrape-prices
 ```
 
 ---
+
+## ⚙️ Running as System Services (`systemd`)
+
+For automated, persistent 24/7 background execution with auto-restart on crashes and system reboots, pre-configured `systemd` unit files are available in the [systemd/](systemd/) directory:
+
+| Unit File | Type | Description |
+|---|---|---|
+| `delta-cards-scrape.service` | `oneshot` | Executes a single Wallapop scrape cycle |
+| `delta-cards-scrape.timer` | `timer` | Triggers the scrape service hourly (at `:00`) |
+| `delta-cards-assign.service` | `simple` | Continuous worker for AI recognition and pricing |
+| `delta-cards-alerts.service` | `simple` | Continuous worker for deal verification & Discord alerts |
+
+### Installation Steps
+
+1. **Adjust user and paths** in `systemd/*.service` to match your deployment environment:
+   ```ini
+   User=your_username
+   Group=your_username
+   WorkingDirectory=/path/to/delta-cards
+   Environment="PATH=/home/your_username/.local/bin:/usr/local/bin:/usr/bin:/bin"
+   ExecStart=/home/your_username/.local/bin/uv run delta-cards ...
+   ```
+
+2. **Copy the unit files** to `/etc/systemd/system/`:
+   ```bash
+   sudo cp systemd/delta-cards-*.service /etc/systemd/system/
+   sudo cp systemd/delta-cards-*.timer /etc/systemd/system/
+   sudo systemctl daemon-reload
+   ```
+
+3. **Enable and start the services**:
+   ```bash
+   # Enable and start the hourly scraper timer
+   sudo systemctl enable --now delta-cards-scrape.timer
+
+   # Enable and start the recognition worker
+   sudo systemctl enable --now delta-cards-assign.service
+
+   # Enable and start the Discord alert worker
+   sudo systemctl enable --now delta-cards-alerts.service
+   ```
+
+### Managing Systemd Services
+
+- **Check status:**
+  ```bash
+  sudo systemctl status delta-cards-scrape.timer
+  sudo systemctl status delta-cards-assign.service
+  sudo systemctl status delta-cards-alerts.service
+  ```
+
+- **View live logs:**
+  ```bash
+  journalctl -u delta-cards-assign.service -f
+  journalctl -u delta-cards-alerts.service -f
+  journalctl -u delta-cards-scrape.service -n 50
+  ```
+
+- **Stop services:**
+  ```bash
+  sudo systemctl stop delta-cards-scrape.timer
+  sudo systemctl stop delta-cards-assign.service
+  sudo systemctl stop delta-cards-alerts.service
+  ```
+
+- **Restart a service:**
+  ```bash
+  sudo systemctl restart delta-cards-assign.service
+  ```
 
 ## 🐍 Python Library Usage
 
