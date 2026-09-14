@@ -17,15 +17,16 @@ from delta_cards.database.repository import (
     upsert_cardmarket_product,
 )
 from delta_cards.models import OfferListing
-from delta_cards.recognition.tcgdex_resolver import TCGDexResolver
 from delta_cards.settings import Settings
-from delta_cards.tcgdex.assigner import _apply_card_result_to_offer, enrich_card_offers_in_db
+from delta_cards.tcgdex.assigner import (
+    _apply_card_result_to_offer,
+    enrich_card_offers_in_db,
+    extract_cardmarket_prices,
+)
 
 
 def test_tcgdex_price_extraction():
-    """Verify that TCGDexResolver accurately parses avg, low, and trend prices from TCGDex card JSON."""
-    resolver = TCGDexResolver()
-
+    """Verify that extract_cardmarket_prices accurately parses avg, low, and trend prices from TCGDex card JSON."""
     # Standard card pricing
     sample_data = {
         "pricing": {
@@ -39,7 +40,7 @@ def test_tcgdex_price_extraction():
             }
         }
     }
-    prices = resolver.extract_cardmarket_prices(sample_data)
+    prices = extract_cardmarket_prices(sample_data)
     assert prices["avg"] == 0.15
     assert prices["low"] == 0.02
     assert prices["trend"] == 0.12
@@ -54,7 +55,7 @@ def test_tcgdex_price_extraction():
             }
         }
     }
-    prices_holo = resolver.extract_cardmarket_prices(sample_holo)
+    prices_holo = extract_cardmarket_prices(sample_holo)
     assert prices_holo["avg"] == 2.50
     assert prices_holo["low"] == 1.10
     assert prices_holo["trend"] == 2.30
@@ -73,13 +74,13 @@ def test_tcgdex_price_extraction():
             }
         ]
     }
-    prices_var = resolver.extract_cardmarket_prices(sample_variants)
+    prices_var = extract_cardmarket_prices(sample_variants)
     assert prices_var["avg"] == 15.0
     assert prices_var["low"] == 10.0
     assert prices_var["trend"] == 14.5
 
     # Missing or empty pricing
-    empty_prices = resolver.extract_cardmarket_prices({})
+    empty_prices = extract_cardmarket_prices({})
     assert empty_prices["avg"] is None
     assert empty_prices["low"] is None
     assert empty_prices["trend"] is None

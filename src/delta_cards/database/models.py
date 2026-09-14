@@ -136,6 +136,11 @@ class WallapopOffers(SQLModel, table=True):
         index=True,
         description="Cardmarket assignment state: 'pending', 'assigned', 'not_assigned'",
     )
+    alert_status: str = Field(
+        default="none",
+        index=True,
+        description="Alert status: 'none', 'pending', 'sent', 'rejected'",
+    )
     scraped_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         description="Timestamp when the offer was first scraped",

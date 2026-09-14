@@ -49,10 +49,34 @@ class Settings(BaseSettings):
         description="Custom Discord emoji or unicode tag preceding wild offer message (e.g. <:pokeball_light:123456789>)",
     )
 
+    # Alert Service / Worker Settings
+    alert_dispatch_interval_minutes: Optional[int] = Field(
+        default=None,
+        description="Interval in minutes between periodic alert dispatches (default: 30 minutes)",
+    )
+    alert_dispatch_interval_seconds: int = Field(
+        default=1800,
+        description="Interval in seconds between periodic alert dispatches (default: 1800s / 30m)",
+    )
+
     # Debug Mode: Controls alerting on previously saved database offers
     debug: bool = Field(
         default=False,
         description="If true, send alerts with saved offers. If false, do not send alerts for existing deals.",
+    )
+
+    # LLM False-Positive Verification Settings
+    llm_verifier_enabled: bool = Field(
+        default=True,
+        description="Enable LLM false positive verification before dispatching alerts.",
+    )
+    llm_verifier_model_path: str = Field(
+        default="models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        description="Path to GGUF model for LLM verification.",
+    )
+    llm_verifier_min_confidence: float = Field(
+        default=70.0,
+        description="Minimum LLM confidence percentage (0-100) required to dispatch an alert.",
     )
 
     @field_validator("alert_condition_operator", mode="before")
@@ -64,6 +88,13 @@ class Settings(BaseSettings):
         if val not in ("or", "and"):
             raise ValueError(f"alert_condition_operator must be either 'or' or 'and', got '{v}'")
         return val
+
+    @property
+    def alert_interval(self) -> int:
+        """Returns the effective interval in seconds between alert dispatches."""
+        if self.alert_dispatch_interval_minutes is not None:
+            return self.alert_dispatch_interval_minutes * 60
+        return self.alert_dispatch_interval_seconds
 
 
 @lru_cache()

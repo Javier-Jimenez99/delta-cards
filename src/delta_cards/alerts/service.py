@@ -151,6 +151,7 @@ def format_product_type(product_type: Optional[str]) -> str:
 def build_discord_embed(
     offer: OfferListing,
     result: AlertConditionResult,
+    llm_verification: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Formats a deal offer into a renovated Discord embed object.
 
@@ -199,6 +200,29 @@ def build_discord_embed(
         {"name": "📦 Tipo", "value": f"**{type_label}**", "inline": True},
         {"name": "📍 Ubicación", "value": f"**{location_str}**", "inline": True},
     ]
+
+    # LLM False-Positive Verification Field
+    if llm_verification:
+        score = getattr(llm_verification, "confidence_score", None)
+        if score is None and isinstance(llm_verification, dict):
+            score = llm_verification.get("confidence_score", 0.0)
+        confirmed = getattr(llm_verification, "confirmed_count", None)
+        if confirmed is None and isinstance(llm_verification, dict):
+            confirmed = llm_verification.get("confirmed_count", 0)
+        summary = getattr(llm_verification, "verdict_summary", "")
+        if not summary and isinstance(llm_verification, dict):
+            summary = llm_verification.get("verdict_summary", "")
+        is_ver = getattr(llm_verification, "is_verified", True)
+        if is_ver is None and isinstance(llm_verification, dict):
+            is_ver = llm_verification.get("is_verified", True)
+
+        icon = "🤖" if is_ver else "⚠️"
+        score_val = f"{score:.0f}%" if score is not None else "N/A"
+        fields.append({
+            "name": f"{icon} Verificación IA (LLM)",
+            "value": f"Confianza: **{score_val}** ({confirmed}/20 confirmadas) • *{summary}*",
+            "inline": False,
+        })
 
     # Enlaces a la oferta en Wallapop y a la página de Cardmarket
     links = [f"[Oferta en Wallapop]({wallapop_url})"]
@@ -289,8 +313,9 @@ def send_discord_webhook(
 class DiscordAlertService:
     """Coordinates evaluating offers and dispatching Discord notifications."""
 
-    def __init__(self, settings: Optional[Settings] = None):
+    def __init__(self, settings: Optional[Settings] = None, verifier: Optional[Any] = None):
         self.settings = settings or get_settings()
+        self.verifier = verifier
 
     def process_and_alert_offers(
         self,
@@ -364,10 +389,37 @@ class DiscordAlertService:
             )
 
             if cond.is_triggered:
+                # LLM False-Positive Verification before dispatching alerts
+                llm_res = None
+                has_verification_data = bool(
+                    self.verifier is not None
+                    or getattr(offer, "_query_ocr", None)
+                    or getattr(offer, "image_url", None)
+                    or getattr(offer, "tcgdex_id", None)
+                )
+                if self.settings.llm_verifier_enabled and has_verification_data:
+                    try:
+                        if self.verifier is None:
+                            from ..recognition.llm_verifier import get_llm_verifier
+                            self.verifier = get_llm_verifier(
+                                model_path=self.settings.llm_verifier_model_path,
+                                min_confidence=self.settings.llm_verifier_min_confidence,
+                            )
+                        llm_res = self.verifier.verify_match(offer)
+                        if not llm_res.is_verified:
+                            logger.info(
+                                f"Alert suppressed for '{offer.title[:35]}' by LLM Verifier "
+                                f"(confidence {llm_res.confidence_score}% < {self.settings.llm_verifier_min_confidence}%): "
+                                f"{llm_res.verdict_summary}"
+                            )
+                            continue
+                    except Exception as err:
+                        logger.warning(f"LLM verification error: {err}. Proceeding with alert.")
+
                 logger.info(
                     f"Deal detected for '{offer.title[:35]}': {cond.reason}"
                 )
-                embed = build_discord_embed(offer, cond)
+                embed = build_discord_embed(offer, cond, llm_verification=llm_res)
                 matching_embeds.append(embed)
 
         if not matching_embeds:
@@ -383,3 +435,221 @@ class DiscordAlertService:
             content=offer_msg,
         )
         return len(matching_embeds) if ok else 0
+
+
+class AlertWorkerService:
+    """Independent worker service that periodically dispatches 1 verified deal alert to Discord."""
+
+    def __init__(
+        self,
+        engine: Optional[Any] = None,
+        settings: Optional[Settings] = None,
+        verifier: Optional[Any] = None,
+    ):
+        from ..database.connection import get_engine
+        self.engine = engine or get_engine()
+        self.settings = settings or get_settings()
+        self.verifier = verifier
+
+    def dispatch_one_pending_alert(self) -> Optional[Any]:
+        """Finds and evaluates pending offers one by one until 1 is verified and sent to Discord.
+
+        1. Retrieves offers with alert_status == 'pending'.
+        2. For each offer:
+           - Verifies pricing condition (Wallapop < Cardmarket).
+           - Executes the LLM Verifier right before sending.
+           - If verified: sends Discord alert webhook, marks alert_status = 'sent', and returns.
+           - If rejected by LLM: marks alert_status = 'rejected' and advances to the next offer.
+        3. Returns the WallapopOffers model that was alerted, or None if no alert was dispatched.
+        """
+        if not self.settings.discord_alerts_enabled:
+            logger.info("Discord alerts are disabled in settings (DISCORD_ALERTS_ENABLED=false).")
+            return None
+
+        webhook_url = self.settings.discord_webhook_url
+        if not webhook_url:
+            logger.debug("No DISCORD_WEBHOOK_URL configured in settings. Skipping Discord alerts.")
+            return None
+
+        from ..database.models import WallapopOffers, CardmarketPrice, CardmarketProduct
+        from sqlmodel import Session, select, and_
+
+        with Session(self.engine) as session:
+            stmt = (
+                select(WallapopOffers, CardmarketPrice, CardmarketProduct)
+                .outerjoin(
+                    CardmarketPrice,
+                    and_(
+                        WallapopOffers.cardmarket_product_id == CardmarketPrice.cardmarket_product_id,
+                        WallapopOffers.language == CardmarketPrice.language,
+                    ),
+                )
+                .outerjoin(
+                    CardmarketProduct,
+                    WallapopOffers.cardmarket_product_id == CardmarketProduct.id,
+                )
+                .where(WallapopOffers.alert_status == "pending")
+                .order_by(WallapopOffers.scraped_at.desc())
+            )
+            pending_candidates = session.exec(stmt).all()
+
+        if not pending_candidates:
+            logger.debug("No pending offers with alert_status='pending' found in database.")
+            return None
+
+        logger.info(f"Found {len(pending_candidates)} pending offer(s) to evaluate for dispatch.")
+
+        for offer, price_row, product_row in pending_candidates:
+            # Re-check market price
+            avg_p = price_row.avg_price if price_row else None
+            low_p = price_row.min_price_all if price_row else None
+            ref_market_price = avg_p if avg_p is not None else low_p
+
+            if ref_market_price is None or ref_market_price <= 0:
+                logger.debug(f"Offer {offer.id} missing reference price. Setting alert_status='none'.")
+                with Session(self.engine) as s:
+                    db_o = s.exec(select(WallapopOffers).where(WallapopOffers.id == offer.id)).first()
+                    if db_o:
+                        db_o.alert_status = "none"
+                        db_o.updated_at = datetime.now(timezone.utc)
+                        s.add(db_o)
+                        s.commit()
+                continue
+
+            cond = evaluate_alert_condition(
+                offer_price=offer.price,
+                market_price=ref_market_price,
+                settings=self.settings,
+            )
+
+            if not cond.is_triggered:
+                logger.debug(f"Offer {offer.id} ('{offer.title[:30]}') does not trigger alert. Setting alert_status='none'.")
+                with Session(self.engine) as s:
+                    db_o = s.exec(select(WallapopOffers).where(WallapopOffers.id == offer.id)).first()
+                    if db_o:
+                        db_o.alert_status = "none"
+                        db_o.updated_at = datetime.now(timezone.utc)
+                        s.add(db_o)
+                        s.commit()
+                continue
+
+            # Convert to OfferListing for embed and LLM verification
+            cm_url = (
+                product_row.cardmarket_url if product_row
+                else (f"https://www.cardmarket.com/{offer.language or 'es'}/Pokemon/Products?idProduct={offer.cardmarket_product_id}" if offer.cardmarket_product_id else None)
+            )
+            offer_listing = OfferListing(
+                id=offer.id,
+                title=offer.title,
+                price=offer.price,
+                currency=offer.currency,
+                product_type=offer.product_type,
+                location=offer.location,
+                country=offer.country,
+                description=offer.description,
+                link=offer.link,
+                image_url=offer.image_url,
+                is_reserved=offer.is_reserved,
+                shipping_available=offer.shipping_available,
+                seller_user_id=offer.seller_user_id,
+                seller_link=offer.seller_link,
+                published_date=offer.published_date,
+                search_profile_id=offer.search_profile_id,
+                cardmarket_product_id=offer.cardmarket_product_id,
+                cardmarket_url=cm_url,
+                language=offer.language,
+                cardmarket_low_price=low_p,
+                cardmarket_avg_price=avg_p,
+                cardmarket_trend_price=price_row.trend_price if price_row else None,
+                cardmarket_price_spain=price_row.min_price_spain if price_row else None,
+                cardmarket_price_all=ref_market_price,
+                tcgdex_id=offer.tcgdex_id,
+                assigned_state=offer.assigned_state or "assigned",
+                alert_status="pending",
+            )
+
+            # LLM False-Positive Verification exclusively executed here before dispatch
+            llm_res = None
+            if self.settings.llm_verifier_enabled:
+                try:
+                    if self.verifier is None:
+                        from ..recognition.llm_verifier import get_llm_verifier
+                        self.verifier = get_llm_verifier(
+                            model_path=self.settings.llm_verifier_model_path,
+                            min_confidence=self.settings.llm_verifier_min_confidence,
+                        )
+                    llm_res = self.verifier.verify_match(offer_listing)
+                    if not llm_res.is_verified:
+                        logger.info(
+                            f"Offer '{offer.title[:35]}' rejected by LLM Verifier "
+                            f"(score {llm_res.confidence_score}% < {self.settings.llm_verifier_min_confidence}%): "
+                            f"{llm_res.verdict_summary}. Marking as 'rejected' and trying next offer."
+                        )
+                        with Session(self.engine) as s:
+                            db_o = s.exec(select(WallapopOffers).where(WallapopOffers.id == offer.id)).first()
+                            if db_o:
+                                db_o.alert_status = "rejected"
+                                db_o.updated_at = datetime.now(timezone.utc)
+                                s.add(db_o)
+                                s.commit()
+                        continue
+                except Exception as err:
+                    logger.warning(f"LLM verification error: {err}. Proceeding with alert.")
+
+            # Construct Discord Embed and Dispatch
+            embed = build_discord_embed(offer_listing, cond, llm_verification=llm_res)
+            emoji = (self.settings.alert_wild_offer_emoji or "").strip()
+            offer_msg = f"{emoji} ¡Ha aparecido una oferta salvaje!" if emoji else DEFAULT_OFFER_ALERT_MESSAGE
+            ok = send_discord_webhook(
+                webhook_url=webhook_url,
+                embeds=[embed],
+                content=offer_msg,
+            )
+
+            if ok:
+                with Session(self.engine) as s:
+                    db_o = s.exec(select(WallapopOffers).where(WallapopOffers.id == offer.id)).first()
+                    if db_o:
+                        db_o.alert_status = "sent"
+                        db_o.updated_at = datetime.now(timezone.utc)
+                        s.add(db_o)
+                        s.commit()
+                logger.info(f"Successfully dispatched 1 alert for offer '{offer.title[:35]}' (ID: {offer.id}).")
+                return offer
+            else:
+                logger.warning(f"Failed to dispatch webhook for offer {offer.id}. Trying next candidate.")
+
+        logger.info("Checked all pending offers in this cycle; none were dispatched.")
+        return None
+
+    def run_loop(
+        self,
+        interval_seconds: Optional[int] = None,
+        once: bool = False,
+    ) -> None:
+        """Runs the alert dispatcher loop periodically (e.g. every 30 minutes)."""
+        import time
+
+        interval = interval_seconds if interval_seconds is not None else self.settings.alert_interval
+        logger.info(f"Starting AlertWorkerService loop (interval: {interval}s, once: {once}).")
+
+        while True:
+            try:
+                sent_offer = self.dispatch_one_pending_alert()
+                if sent_offer:
+                    logger.info(f"Dispatched deal: {sent_offer.title[:40]} ({sent_offer.price:.2f}€)")
+                else:
+                    logger.info("No pending deal dispatched in this cycle.")
+            except Exception as exc:
+                logger.error(f"Error in AlertWorkerService cycle: {exc}", exc_info=True)
+
+            if once:
+                logger.info("Exiting AlertWorkerService (--once specified).")
+                break
+
+            logger.info(f"Alert worker sleeping for {interval}s (Ctrl+C to stop)...")
+            try:
+                time.sleep(interval)
+            except KeyboardInterrupt:
+                logger.info("Alert worker stopped by user (KeyboardInterrupt).")
+                break

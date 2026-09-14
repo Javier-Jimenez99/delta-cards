@@ -14,8 +14,113 @@ from ..models import OfferListing, is_card_offer, EXCLUDED_PRODUCT_TYPES, LOT_PA
 
 logger = logging.getLogger(__name__)
 
-# Re-export is_card_offer, EXCLUDED_PRODUCT_TYPES, LOT_PATTERNS for backwards compatibility
+
+def build_cardmarket_url(id_product: Optional[Any], language: str = "es") -> Optional[str]:
+    """Generates direct Cardmarket product URL from product ID."""
+    if not id_product:
+        return None
+    return f"https://www.cardmarket.com/{language}/Pokemon/Products?idProduct={id_product}"
+
+
+def extract_cardmarket_prices(raw_card_data: dict) -> dict:
+    """Extracts low, trend, and avg prices from Cardmarket pricing in TCGDex."""
+    prices = {"low": None, "trend": None, "avg": None}
+    if not raw_card_data:
+        return prices
+
+    def _from_dict(cm: dict) -> dict:
+        low = cm.get("low") or cm.get("lowPrice")
+        trend = cm.get("trend") or cm.get("trendPrice")
+        avg = cm.get("avg") or cm.get("avgPrice")
+        if avg is None:
+            avg = cm.get("avg-holo") or cm.get("avg30") or cm.get("avg7")
+        if low is None:
+            low = cm.get("low-holo")
+        if trend is None:
+            trend = cm.get("trend-holo")
+        return {
+            "low": float(low) if low is not None else None,
+            "trend": float(trend) if trend is not None else None,
+            "avg": float(avg) if avg is not None else None,
+        }
+
+    pricing = raw_card_data.get("pricing")
+    if isinstance(pricing, dict):
+        cm = pricing.get("cardmarket")
+        if isinstance(cm, dict):
+            p = _from_dict(cm)
+            if p["avg"] is not None or p["low"] is not None or p["trend"] is not None:
+                return p
+
+    variants = raw_card_data.get("variants_detailed")
+    if isinstance(variants, list):
+        for variant in variants:
+            if isinstance(variant, dict):
+                v_pricing = variant.get("pricing")
+                if isinstance(v_pricing, dict):
+                    v_cm = v_pricing.get("cardmarket")
+                    if isinstance(v_cm, dict):
+                        p = _from_dict(v_cm)
+                        if p["avg"] is not None or p["low"] is not None or p["trend"] is not None:
+                            return p
+    return prices
+
+
+import urllib.request
+import json
+from functools import lru_cache
+
+@lru_cache(maxsize=1024)
+def fetch_tcgdex_card_pricing(tcgdex_id: str, language: str = "es") -> dict:
+    """Fetches Cardmarket pricing and product details from TCGdex REST API for a given card."""
+    if not tcgdex_id:
+        return {}
+    langs_to_try = [language] if language in ("en", "es") else [language, "en"]
+    if "en" not in langs_to_try:
+        langs_to_try.append("en")
+
+    for lang in langs_to_try:
+        url = f"https://api.tcgdex.net/v2/{lang}/cards/{tcgdex_id}"
+        req = urllib.request.Request(url, headers={"User-Agent": "delta-cards/1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=6.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                pricing = data.get("pricing") or {}
+                cm_data = pricing.get("cardmarket")
+                if not isinstance(cm_data, dict):
+                    # Check variants_detailed
+                    for v in data.get("variants_detailed") or []:
+                        if isinstance(v, dict) and isinstance(v.get("pricing"), dict):
+                            v_cm = v["pricing"].get("cardmarket")
+                            if isinstance(v_cm, dict):
+                                cm_data = v_cm
+                                break
+
+                if isinstance(cm_data, dict):
+                    extracted_prices = extract_cardmarket_prices(data)
+                    cm_id = cm_data.get("idProduct")
+                    cm_url = (
+                        build_cardmarket_url(cm_id, language=lang)
+                        if cm_id
+                        else None
+                    )
+                    return {
+                        "idProduct": cm_id,
+                        "url": cm_url,
+                        "prices": extracted_prices,
+                        "name": data.get("name"),
+                        "raw": data,
+                    }
+        except Exception as err:
+            logger.debug(f"Failed fetching TCGdex pricing for {tcgdex_id} ({lang}): {err}")
+    return {}
+
+
+# Re-export helpers for backwards compatibility
 __all__ = [
+    "build_cardmarket_url",
+    "extract_cardmarket_prices",
+    "fetch_tcgdex_card_pricing",
     "is_card_offer",
     "assign_tcgdex_to_offers",
     "enrich_card_offers_in_db",
@@ -32,8 +137,27 @@ def _apply_card_result_to_offer(offer: Any, res: dict) -> None:
     cm = res.get("cardmarket", {}) or {}
     meta = res.get("extracted_metadata", {}) or {}
     offer.tcgdex_id = vc.get("id")
+    lang = meta.get("language") or getattr(offer, "language", None) or "es"
     if meta.get("language") and hasattr(offer, "language"):
         offer.language = meta["language"]
+
+    # Fallback to TCGdex online pricing if cardmarket data / product ID is missing
+    if (not cm or not cm.get("idProduct") or not cm.get("prices")) and offer.tcgdex_id:
+        try:
+            fetched_cm = fetch_tcgdex_card_pricing(offer.tcgdex_id, language=lang)
+            if fetched_cm:
+                if not cm:
+                    cm = fetched_cm
+                else:
+                    if not cm.get("idProduct") and fetched_cm.get("idProduct"):
+                        cm["idProduct"] = fetched_cm["idProduct"]
+                    if not cm.get("url") and fetched_cm.get("url"):
+                        cm["url"] = fetched_cm["url"]
+                    if not cm.get("prices") and fetched_cm.get("prices"):
+                        cm["prices"] = fetched_cm["prices"]
+        except Exception as exc:
+            logger.debug(f"Error resolving fallback TCGdex pricing for {offer.tcgdex_id}: {exc}")
+
     if cm.get("idProduct") and hasattr(offer, "cardmarket_product_id"):
         offer.cardmarket_product_id = cm["idProduct"]
     if hasattr(offer, "cardmarket_url"):
@@ -67,6 +191,13 @@ def _apply_card_result_to_offer(offer: Any, res: dict) -> None:
         object.__setattr__(offer, "_temp_cm_avg_price", prices.get("avg"))
     if prices and prices.get("trend") is not None:
         object.__setattr__(offer, "_temp_cm_trend_price", prices.get("trend"))
+    if res.get("query_ocr"):
+        object.__setattr__(offer, "_query_ocr", res.get("query_ocr"))
+    if res.get("candidate_ocr"):
+        object.__setattr__(offer, "_candidate_ocr", res.get("candidate_ocr"))
+    if res.get("verified_card"):
+        object.__setattr__(offer, "_tcgdex_card", res.get("verified_card"))
+
 
 
 def assign_tcgdex_to_offers(
@@ -215,8 +346,17 @@ def enrich_card_offers_in_db(
                         trend_price=trend_price,
                         session=session,
                     )
+                ref_price = avg_price if avg_price is not None else low_price
+                if ref_price is not None and ref_price > 0 and db_offer.price < ref_price:
+                    if getattr(db_offer, "alert_status", None) != "sent":
+                        db_offer.alert_status = "pending"
+                else:
+                    if getattr(db_offer, "alert_status", None) != "sent":
+                        db_offer.alert_status = "none"
             else:
                 db_offer.assigned_state = "not_assigned"
+                if getattr(db_offer, "alert_status", None) != "sent":
+                    db_offer.alert_status = "none"
             session.add(db_offer)
 
         session.commit()

@@ -25,12 +25,19 @@ dependencies = [
     "langdetect>=1.0.9",
     "onnxruntime>=1.30.0",
     "pydantic-settings>=2.15.0",
+    "usearch>=2.26.0",
+    "rapidocr-onnxruntime>=1.4.0",
+    "transformers>=4.40.0",
+    "onnx>=1.16.0",
+    "onnxscript>=0.7.0",
+    "streamlit>=1.63.0",
 ]
 
 [project.scripts]
 delta-cards = "delta_cards:main"
 delta-cards-scrape = "delta_cards:main_scrape"
 delta-cards-assign = "delta_cards:main_assign"
+delta-cards-alert = "delta_cards:main_alert"
 
 [build-system]
 requires = ["uv_build>=0.12.12,<0.13.0"]
@@ -41,8 +48,18 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
 ]
+gpu = [
+    # onnxruntime-gpu is already installed (comes as transitive dep).
+    # To enable CUDA inference, install the CUDA 13 toolkit on the host:
+    #   https://developer.nvidia.com/cuda-downloads
+    # Then CardOCR will automatically detect CUDAExecutionProvider.
+    "onnxruntime-gpu",
+]
 
 [tool.uv]
+# Default: CPU-only PyTorch (production server, Raspberry Pi).
+# To use GPU PyTorch on your local machine, change torch-backend to "cuda":
+#   torch-backend = "cuda"  # → pulls from pytorch-cu128 automatically
 torch-backend = "cpu"
 
 [tool.uv.sources]
@@ -59,6 +76,11 @@ llama-cpp-python = [
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [[tool.uv.index]]

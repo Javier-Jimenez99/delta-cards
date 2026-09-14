@@ -240,7 +240,7 @@ def main():
         Panel.fit(
             "[bold green]✓ Setup Completed Successfully![/bold green]\n\n"
             "You are now ready to run delta-cards:\n"
-            "  • [cyan]uv run python scripts/test_pipeline.py 2[/cyan]   (Profile pipeline on real offers)\n"
+            "  • [cyan]uv run python scripts/evaluate.py --limit 2[/cyan]   (Run quick evaluation benchmark)\n"
             "  • [cyan]uv run python -m delta_cards.cli -p single_card -l 2[/cyan]  (Scrape & enrich cards)\n"
             "  • [cyan]uv run pytest tests/ -v[/cyan]                   (Run complete test suite)",
             border_style="green",

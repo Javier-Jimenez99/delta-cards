@@ -100,7 +100,19 @@ def build_parser() -> argparse.ArgumentParser:
     assign_parser.add_argument("--loop", action="store_true", default=True, help="Keep worker running continuously (default: True)")
     assign_parser.add_argument("--interval", type=int, default=30, help="Seconds between queue checks when waiting for offers (default: 30)")
 
-    # 3. All subcommand: explicit full pipeline (scrape + assign + check deals)
+    # 3. Alerts subcommand: decoupled worker reading pending deals -> LLM Verifier -> Discord Webhook
+    alerts_parser = subparsers.add_parser(
+        "alerts",
+        parents=[common_parser],
+        help="Run decoupled alert worker: checks pending deals, verifies with LLM, and dispatches Discord alerts periodically",
+    )
+    alerts_parser.add_argument("--interval", type=int, default=None, help="Seconds between alert dispatches (default: 1800s / 30min)")
+    alerts_parser.add_argument("--once", action="store_true", help="Dispatch at most one verified alert and exit")
+    alerts_parser.add_argument("--no-discord", action="store_true", help="Skip sending Discord alert notifications")
+    alerts_parser.add_argument("--discord-webhook", type=str, default=None, help="Override Discord webhook URL")
+    alerts_parser.add_argument("--test-discord", action="store_true", help="Send a test deal alert to Discord and exit")
+
+    # 4. All subcommand: explicit full pipeline (scrape + assign + check deals)
     all_parser = subparsers.add_parser(
         "all",
         parents=[common_parser],
@@ -118,6 +130,40 @@ def build_parser() -> argparse.ArgumentParser:
     all_parser.add_argument("--discord-webhook", type=str, default=None, help="Override Discord webhook URL")
     all_parser.add_argument("--test-discord", action="store_true", help="Send a test deal alert to Discord and exit")
     all_parser.add_argument("--alert-all-deals", action="store_true", help="Send Discord alerts for all matching deals")
+
+    # 4. build-index subcommand: build offline USearch index from TCGdex
+    index_parser = subparsers.add_parser(
+        "build-index",
+        parents=[common_parser],
+        help="Build offline USearch Mmap index and metadata from TCGdex SDK",
+    )
+    index_parser.add_argument("--sets", nargs="*", default=None, help="Set IDs to index (e.g. sv01 sv02 sv03)")
+    index_parser.add_argument("--lang", default="en", help="Language code (e.g. es, en, fr, de) or 'all'")
+    index_parser.add_argument("--limit", type=int, default=None, help="Limit total cards to index (for testing)")
+    index_parser.add_argument("--index-path", default=None, help="Output .usearch index file (default: data/pokemon_cards_{lang}.usearch)")
+    index_parser.add_argument("--cache-dir", default="data/images_cache", help="Image cache directory")
+    index_parser.add_argument("--concurrency", type=int, default=8, help="Async download concurrency")
+
+    # 5. export-models subcommand: export and quantize ONNX models
+    export_parser = subparsers.add_parser(
+        "export-models",
+        parents=[common_parser],
+        help="Export and quantize DINOv3 INT8 ONNX model",
+    )
+    export_parser.add_argument("--model", choices=["dinov3", "all"], default="all", help="Model to export")
+
+    # 6. sync-catalog subcommand: check for and index newly released cards daily
+    sync_parser = subparsers.add_parser(
+        "sync-catalog",
+        parents=[common_parser],
+        help="Incrementally check TCGdex and index newly released cards",
+    )
+    sync_parser.add_argument("--daemon", action="store_true", help="Run continuously as a daily daemon")
+    sync_parser.add_argument("--interval-hours", type=float, default=24.0, help="Sync interval in hours for daemon mode (default: 24)")
+    sync_parser.add_argument("--lang", default="en", help="Language code (default: en)")
+    sync_parser.add_argument("--index-path", default="data/pokemon_cards.usearch", help="Output .usearch index file")
+    sync_parser.add_argument("--cache-dir", default="data/images_cache", help="Image cache directory")
+    sync_parser.add_argument("--concurrency", type=int, default=16, help="Async download concurrency")
 
     return parser
 
@@ -249,9 +295,92 @@ def handle_test_discord(args: argparse.Namespace) -> bool:
     return True
 
 
-def scrape_cardmarket_prices_for_offers(offers: list, engine, args: argparse.Namespace, status=None) -> int:
-    """Cardmarket prices are retrieved automatically from TCGDex."""
-    return 0
+def _create_scraper_progress_callback(status, db_save_enabled: bool, is_all: bool = False):
+    def progress_callback(event: str, data: dict) -> None:
+        if event == "profile_start":
+            p_idx = data["index"]
+            p_total = data["total"]
+            p_name = data["profile_name"]
+            n_queries = data["num_queries"]
+            q_label = "query variation" if n_queries == 1 else "query variations"
+            console.print(
+                f"\n[bold cyan]▶ [{p_idx}/{p_total}][/bold cyan] [bold white]{p_name}[/bold white] [dim]({n_queries} {q_label})[/dim]"
+            )
+            status.update(f"[cyan]Searching {p_name}...[/cyan]")
+
+        elif event == "query_start":
+            q_idx = data["index"]
+            q_total = data["total"]
+            query = data["query"]
+            status.update(
+                f"[dim]Searching query [{q_idx}/{q_total}]:[/dim] [yellow]'{query}'[/yellow]..."
+            )
+
+        elif event == "query_done":
+            query = data["query"]
+            retrieved = data["retrieved"]
+            kept = data["kept"]
+            badge = f"[green]+{kept} valid[/green]" if kept > 0 else "[dim]0 valid[/dim]"
+            db_note = " [dim](saved to DB)[/dim]" if (db_save_enabled and kept > 0) else ""
+            console.print(
+                f"   [dim]•[/dim] [white]'{query}'[/white] [dim]→[/dim] {retrieved} retrieved, {badge}{db_note}"
+            )
+
+        elif event == "profile_done":
+            total_kept = data["total_kept"]
+            retrieved_total = data["retrieved_total"]
+            console.print(
+                f"   [bold green]✓[/bold green] [dim]Profile completed:[/] [bold]{total_kept}[/bold] valid offers kept "
+                f"[dim]({retrieved_total} total evaluated)[/dim]"
+            )
+            status.update("[cyan]Proceeding to next step...[/cyan]" if is_all else "[cyan]Saving scraped data...[/cyan]")
+    return progress_callback
+
+
+def _render_scraped_summary_table(
+    offers: list,
+    saved_files: dict,
+    db_note: Optional[str] = None,
+    extra_lines: Optional[List[str]] = None,
+) -> None:
+    if not offers:
+        console.print("\n[yellow]No offers matched the configured search and filter criteria.[/yellow]")
+        return
+
+    table = Table(title=f"\nScraped Offers Summary ({len(offers)} unique items)", border_style="cyan")
+    table.add_column("Product Type", style="bold green")
+    table.add_column("Offers Found", justify="right", style="cyan")
+    table.add_column("Min Price", justify="right", style="yellow")
+    table.add_column("Max Price", justify="right", style="yellow")
+    table.add_column("Avg Price", justify="right", style="yellow")
+
+    by_type: Dict[str, list] = {}
+    for offer in offers:
+        by_type.setdefault(offer.product_type, []).append(offer)
+
+    for ptype, items in sorted(by_type.items()):
+        prices = [i.price for i in items]
+        min_p = min(prices) if prices else 0.0
+        max_p = max(prices) if prices else 0.0
+        avg_p = sum(prices) / len(prices) if prices else 0.0
+        table.add_row(
+            ptype,
+            str(len(items)),
+            f"{min_p:.2f} €",
+            f"{max_p:.2f} €",
+            f"{avg_p:.2f} €",
+        )
+
+    console.print(table)
+
+    console.print("\n[bold green]Saved Output Files & Database:[/bold green]")
+    for fmt, pth in saved_files.items():
+        console.print(f"  • [bold]{fmt.upper()}:[/bold] [cyan]{pth.resolve()}[/cyan]")
+    if extra_lines:
+        for line in extra_lines:
+            console.print(line)
+    if db_note:
+        console.print(db_note)
 
 
 def check_and_report_deals(engine, args: argparse.Namespace, live_offer_ids: Optional[List[str]] = None) -> None:
@@ -494,48 +623,10 @@ def run_scrape(args: argparse.Namespace, config) -> None:
                     logger.warning(f"Error saving batch to DB: {exc}")
 
         with console.status("[bold cyan]Starting Wallapop scraper...[/bold cyan]", spinner="dots") as status:
-            def progress_callback(event: str, data: dict) -> None:
-                if event == "profile_start":
-                    p_idx = data["index"]
-                    p_total = data["total"]
-                    p_name = data["profile_name"]
-                    n_queries = data["num_queries"]
-                    q_label = "query variation" if n_queries == 1 else "query variations"
-                    console.print(
-                        f"\n[bold cyan]▶ [{p_idx}/{p_total}][/bold cyan] [bold white]{p_name}[/bold white] [dim]({n_queries} {q_label})[/dim]"
-                    )
-                    status.update(f"[cyan]Searching {p_name}...[/cyan]")
-
-                elif event == "query_start":
-                    q_idx = data["index"]
-                    q_total = data["total"]
-                    query = data["query"]
-                    status.update(
-                        f"[dim]Searching query [{q_idx}/{q_total}]:[/dim] [yellow]'{query}'[/yellow]..."
-                    )
-
-                elif event == "query_done":
-                    query = data["query"]
-                    retrieved = data["retrieved"]
-                    kept = data["kept"]
-                    badge = f"[green]+{kept} valid[/green]" if kept > 0 else "[dim]0 valid[/dim]"
-                    db_note = " [dim](saved to DB)[/dim]" if (db_save_enabled and kept > 0) else ""
-                    console.print(
-                        f"   [dim]•[/dim] [white]'{query}'[/white] [dim]→[/dim] {retrieved} retrieved, {badge}{db_note}"
-                    )
-
-                elif event == "profile_done":
-                    total_kept = data["total_kept"]
-                    retrieved_total = data["retrieved_total"]
-                    console.print(
-                        f"   [bold green]✓[/bold green] [dim]Profile completed:[/] [bold]{total_kept}[/bold] valid offers kept "
-                        f"[dim]({retrieved_total} total evaluated)[/dim]"
-                    )
-                    status.update("[cyan]Saving scraped data...[/cyan]")
-
+            progress_cb = _create_scraper_progress_callback(status, db_save_enabled)
             offers = asyncio.run(
                 scraper.run(
-                    progress_callback=progress_callback,
+                    progress_callback=progress_cb,
                     on_batch=handle_scraped_batch,
                 )
             )
@@ -543,45 +634,16 @@ def run_scrape(args: argparse.Namespace, config) -> None:
             status.update("[bold cyan]Saving scraped data to files...[/bold cyan]")
             saved_files = scraper.save_results(offers)
 
-        if not offers:
-            console.print("\n[yellow]No offers matched the configured search and filter criteria.[/yellow]")
-        else:
-            table = Table(title=f"\nScraped Offers Summary ({len(offers)} unique items)", border_style="cyan")
-            table.add_column("Product Type", style="bold green")
-            table.add_column("Offers Found", justify="right", style="cyan")
-            table.add_column("Min Price", justify="right", style="yellow")
-            table.add_column("Max Price", justify="right", style="yellow")
-            table.add_column("Avg Price", justify="right", style="yellow")
+        db_note = None
+        if db_save_enabled:
+            if db_saved_total > 0:
+                db_note = f"  • [bold]DATABASE ('WallapopOffers'):[/bold] [green]{db_saved_total} offer(s) saved incrementally to database[/green]"
+            elif db_error:
+                db_note = f"  • [bold yellow]DATABASE ('WallapopOffers'):[/bold yellow] [dim]Skipped ({db_error})[/dim]"
+            else:
+                db_note = "  • [bold]DATABASE ('WallapopOffers'):[/bold] [dim]0 new offers to save[/dim]"
 
-            by_type = {}
-            for offer in offers:
-                by_type.setdefault(offer.product_type, []).append(offer)
-
-            for ptype, items in sorted(by_type.items()):
-                prices = [i.price for i in items]
-                min_p = min(prices) if prices else 0.0
-                max_p = max(prices) if prices else 0.0
-                avg_p = sum(prices) / len(prices) if prices else 0.0
-                table.add_row(
-                    ptype,
-                    str(len(items)),
-                    f"{min_p:.2f} €",
-                    f"{max_p:.2f} €",
-                    f"{avg_p:.2f} €",
-                )
-
-            console.print(table)
-
-            console.print("\n[bold green]Saved Output Files & Database:[/bold green]")
-            for fmt, pth in saved_files.items():
-                console.print(f"  • [bold]{fmt.upper()}:[/bold] [cyan]{pth.resolve()}[/cyan]")
-            if db_save_enabled:
-                if db_saved_total > 0:
-                    console.print(f"  • [bold]DATABASE ('WallapopOffers'):[/bold] [green]{db_saved_total} offer(s) saved incrementally to database[/green]")
-                elif db_error:
-                    console.print(f"  • [bold yellow]DATABASE ('WallapopOffers'):[/bold yellow] [dim]Skipped ({db_error})[/dim]")
-                else:
-                    console.print("  • [bold]DATABASE ('WallapopOffers'):[/bold] [dim]0 new offers to save[/dim]")
+        _render_scraped_summary_table(offers, saved_files, db_note=db_note)
 
         if not getattr(args, "loop", False):
             break
@@ -652,6 +714,8 @@ def run_assign(args: argparse.Namespace, config) -> None:
                     db_item = s.exec(select(WallapopOffers).where(WallapopOffers.id == item.id)).first()
                     if db_item:
                         db_item.assigned_state = "not_assigned"
+                        if getattr(db_item, "alert_status", None) != "sent":
+                            db_item.alert_status = "none"
                         db_item.updated_at = datetime.now(timezone.utc)
                         s.add(db_item)
                 s.commit()
@@ -679,16 +743,10 @@ def run_assign(args: argparse.Namespace, config) -> None:
             try:
                 with Session(engine) as s:
                     db_item = s.exec(select(WallapopOffers).where(WallapopOffers.id == offer.id)).first()
-                    if db_item:
-                        db_item.assigned_state = state
-                        db_item.updated_at = datetime.now(timezone.utc)
-                        if getattr(offer, "tcgdex_id", None):
-                            db_item.tcgdex_id = offer.tcgdex_id
-                        if getattr(offer, "cardmarket_product_id", None):
-                            db_item.cardmarket_product_id = offer.cardmarket_product_id
-                        if getattr(offer, "language", None):
-                            db_item.language = offer.language
-                        s.add(db_item)
+                    low_p = getattr(offer, "_temp_cm_low_price", None) or getattr(offer, "cardmarket_low_price", None)
+                    avg_p = getattr(offer, "_temp_cm_avg_price", None) or getattr(offer, "cardmarket_avg_price", None)
+                    trend_p = getattr(offer, "_temp_cm_trend_price", None) or getattr(offer, "cardmarket_trend_price", None)
+
                     if getattr(offer, "cardmarket_product_id", None):
                         cm_id = offer.cardmarket_product_id
                         cm_url = (
@@ -697,9 +755,6 @@ def run_assign(args: argparse.Namespace, config) -> None:
                             or f"https://www.cardmarket.com/{offer.language or 'es'}/Pokemon/Products?idProduct={cm_id}"
                         )
                         upsert_cardmarket_product(product_id=cm_id, cardmarket_url=cm_url, session=s)
-                        low_p = getattr(offer, "_temp_cm_low_price", None) or getattr(offer, "cardmarket_low_price", None)
-                        avg_p = getattr(offer, "_temp_cm_avg_price", None) or getattr(offer, "cardmarket_avg_price", None)
-                        trend_p = getattr(offer, "_temp_cm_trend_price", None) or getattr(offer, "cardmarket_trend_price", None)
                         if low_p is not None or avg_p is not None or trend_p is not None:
                             upsert_cardmarket_price(
                                 product_id=cm_id,
@@ -709,6 +764,26 @@ def run_assign(args: argparse.Namespace, config) -> None:
                                 trend_price=trend_p,
                                 session=s,
                             )
+
+                    if db_item:
+                        db_item.assigned_state = state
+                        db_item.updated_at = datetime.now(timezone.utc)
+                        if getattr(offer, "tcgdex_id", None):
+                            db_item.tcgdex_id = offer.tcgdex_id
+                        if getattr(offer, "cardmarket_product_id", None):
+                            db_item.cardmarket_product_id = offer.cardmarket_product_id
+                        if getattr(offer, "language", None):
+                            db_item.language = offer.language
+
+                        # Evaluate pricing deal for decoupled alert_status:
+                        ref_p = avg_p if avg_p is not None else low_p
+                        if getattr(offer, "cardmarket_product_id", None) and ref_p is not None and ref_p > 0 and db_item.price < ref_p:
+                            if getattr(db_item, "alert_status", None) != "sent":
+                                db_item.alert_status = "pending"
+                        else:
+                            if getattr(db_item, "alert_status", None) != "sent":
+                                db_item.alert_status = "none"
+                        s.add(db_item)
                     s.commit()
             except Exception as exc:
                 logger.debug(f"Error saving incremental match for {offer.id}: {exc}")
@@ -725,16 +800,23 @@ def run_assign(args: argparse.Namespace, config) -> None:
         with Session(engine) as s:
             for o in unassigned_cards:
                 db_item = s.exec(select(WallapopOffers).where(WallapopOffers.id == o.id)).first()
-                if db_item and db_item.assigned_state == "pending":
-                    db_item.assigned_state = "assigned" if getattr(o, "cardmarket_product_id", None) else "not_assigned"
-                    db_item.updated_at = datetime.now(timezone.utc)
+                if db_item:
+                    has_id = bool(getattr(o, "cardmarket_product_id", None) or getattr(o, "tcgdex_id", None))
+                    if db_item.assigned_state == "pending":
+                        db_item.assigned_state = "assigned" if has_id else "not_assigned"
+                        db_item.updated_at = datetime.now(timezone.utc)
+                    if getattr(o, "tcgdex_id", None):
+                        db_item.tcgdex_id = o.tcgdex_id
+                    if getattr(o, "cardmarket_product_id", None):
+                        db_item.cardmarket_product_id = o.cardmarket_product_id
+                    if not getattr(o, "cardmarket_product_id", None) and getattr(db_item, "alert_status", None) != "sent":
+                        db_item.alert_status = "none"
                     s.add(db_item)
             s.commit()
 
         console.print(f"[bold green]✓ Completed assignment batch: {matched_count[0]}/{len(unassigned_cards)} card(s) matched.[/bold green]")
 
         check_and_report_deals(engine, args, live_offer_ids=[o.id for o in unassigned_cards])
-        dispatch_discord_alerts(engine, args, offers=unassigned_cards)
 
         if not is_continuous:
             break
@@ -784,48 +866,10 @@ def run_all(args: argparse.Namespace, config) -> None:
                 logger.warning(f"Error saving batch to DB: {exc}")
 
     with console.status("[bold cyan]Starting scraper...[/bold cyan]", spinner="dots") as status:
-        def progress_callback(event: str, data: dict) -> None:
-            if event == "profile_start":
-                p_idx = data["index"]
-                p_total = data["total"]
-                p_name = data["profile_name"]
-                n_queries = data["num_queries"]
-                q_label = "query variation" if n_queries == 1 else "query variations"
-                console.print(
-                    f"\n[bold cyan]▶ [{p_idx}/{p_total}][/bold cyan] [bold white]{p_name}[/bold white] [dim]({n_queries} {q_label})[/dim]"
-                )
-                status.update(f"[cyan]Searching {p_name}...[/cyan]")
-
-            elif event == "query_start":
-                q_idx = data["index"]
-                q_total = data["total"]
-                query = data["query"]
-                status.update(
-                    f"[dim]Searching query [{q_idx}/{q_total}]:[/dim] [yellow]'{query}'[/yellow]..."
-                )
-
-            elif event == "query_done":
-                query = data["query"]
-                retrieved = data["retrieved"]
-                kept = data["kept"]
-                badge = f"[green]+{kept} valid[/green]" if kept > 0 else "[dim]0 valid[/dim]"
-                db_note = " [dim](saved to DB)[/dim]" if (db_save_enabled and kept > 0) else ""
-                console.print(
-                    f"   [dim]•[/dim] [white]'{query}'[/white] [dim]→[/dim] {retrieved} retrieved, {badge}{db_note}"
-                )
-
-            elif event == "profile_done":
-                total_kept = data["total_kept"]
-                retrieved_total = data["retrieved_total"]
-                console.print(
-                    f"   [bold green]✓[/bold green] [dim]Profile completed:[/] [bold]{total_kept}[/bold] valid offers kept "
-                    f"[dim]({retrieved_total} total evaluated)[/dim]"
-                )
-                status.update("[cyan]Proceeding to next step...[/cyan]")
-
+        progress_cb = _create_scraper_progress_callback(status, db_save_enabled, is_all=True)
         offers = asyncio.run(
             scraper.run(
-                progress_callback=progress_callback,
+                progress_callback=progress_cb,
                 on_batch=handle_scraped_batch,
             )
         )
@@ -919,45 +963,16 @@ def run_all(args: argparse.Namespace, config) -> None:
                 db_saved_count = save_offers_to_db(offers, db_url=args.db_url)
             except Exception as exc:
                 db_error = str(exc)
-    if not offers:
-        console.print("\n[yellow]No offers matched the configured search and filter criteria.[/yellow]")
-        return
-
-    table = Table(title=f"\nScraped Offers Summary ({len(offers)} unique items)", border_style="cyan")
-    table.add_column("Product Type", style="bold green")
-    table.add_column("Offers Found", justify="right", style="cyan")
-    table.add_column("Min Price", justify="right", style="yellow")
-    table.add_column("Max Price", justify="right", style="yellow")
-    table.add_column("Avg Price", justify="right", style="yellow")
-
-    by_type = {}
-    for offer in offers:
-        by_type.setdefault(offer.product_type, []).append(offer)
-
-    for ptype, items in sorted(by_type.items()):
-        prices = [i.price for i in items]
-        min_p = min(prices) if prices else 0.0
-        max_p = max(prices) if prices else 0.0
-        avg_p = sum(prices) / len(prices) if prices else 0.0
-        table.add_row(
-            ptype,
-            str(len(items)),
-            f"{min_p:.2f} €",
-            f"{max_p:.2f} €",
-            f"{avg_p:.2f} €",
-        )
-
-    console.print(table)
-
-    console.print("\n[bold green]Saved Output Files & Database:[/bold green]")
-    for fmt, pth in saved_files.items():
-        console.print(f"  • [bold]{fmt.upper()}:[/bold] [cyan]{pth.resolve()}[/cyan]")
+    extra_lines = []
     if not getattr(args, "skip_tcgdex", False) and card_offers:
-        console.print(f"  • [bold]TCGDEX / CARDMARKET ENRICHMENT:[/bold] [green]{tcgdex_assigned_count}/{len(card_offers)} card offer(s) identified[/green]")
+        extra_lines.append(f"  • [bold]TCGDEX / CARDMARKET ENRICHMENT:[/bold] [green]{tcgdex_assigned_count}/{len(card_offers)} card offer(s) identified[/green]")
+    db_note = None
     if db_saved_count is not None:
-        console.print(f"  • [bold]DATABASE ('WallapopOffers'):[/bold] [green]{db_saved_count} offer(s) saved/updated[/green]")
+        db_note = f"  • [bold]DATABASE ('WallapopOffers'):[/bold] [green]{db_saved_count} offer(s) saved/updated[/green]"
     elif db_error:
-        console.print(f"  • [bold yellow]DATABASE ('WallapopOffers'):[/bold yellow] [dim]Skipped ({db_error})[/dim]")
+        db_note = f"  • [bold yellow]DATABASE ('WallapopOffers'):[/bold yellow] [dim]Skipped ({db_error})[/dim]"
+
+    _render_scraped_summary_table(offers, saved_files, db_note=db_note, extra_lines=extra_lines)
 
     if config.output_settings.save_db and not getattr(args, "no_db", False):
         engine = get_engine(args.db_url)
@@ -965,17 +980,148 @@ def run_all(args: argparse.Namespace, config) -> None:
         dispatch_discord_alerts(engine, args, offers=offers)
 
 
+def run_build_index(args, config) -> None:
+    """Builds offline USearch Mmap index from TCGdex SDK."""
+    import logging
+    logging.getLogger("delta_cards.recognition.index_builder").setLevel(logging.INFO)
+    from delta_cards.recognition.index_builder import build_index
+
+    languages = [args.lang]
+    if args.lang.lower() == "all":
+        languages = ["en", "es", "ja"]
+
+    for lang in languages:
+        target_index = args.index_path
+        if not target_index:
+            target_index = f"data/pokemon_cards_{lang}.usearch"
+        elif len(languages) > 1:
+            target_index = f"data/pokemon_cards_{lang}.usearch"
+
+        console.print(Panel(
+            f"[bold cyan]Building USearch Mmap Index from TCGdex[/bold cyan]\n"
+            f"Sets: {args.sets or 'ALL'} | Language: {lang} | Output: {target_index}",
+            border_style="cyan",
+        ))
+        asyncio.run(
+            build_index(
+                sets_filter=args.sets,
+                language=lang,
+                limit_cards=args.limit,
+                index_path=target_index,
+                cache_dir=args.cache_dir,
+                concurrency=args.concurrency,
+            )
+        )
+    console.print("[bold green]✓ Offline index construction complete![/bold green]")
+
+
+def run_export_models(args, config) -> None:
+    """Exports and quantizes models to ONNX INT8."""
+    from delta_cards.recognition.dinov3_embedder import ensure_dinov3_onnx_model
+    console.print(Panel("[bold cyan]Exporting and Quantizing DINOv3 ViT-Small INT8 ONNX[/bold cyan]", border_style="cyan"))
+    pth = ensure_dinov3_onnx_model()
+    console.print(f"[bold green]✓ DINOv3 INT8 ONNX ready at:[/bold green] [cyan]{pth}[/cyan]")
+
+
+def run_sync_catalog(args, config) -> None:
+    """Runs daily incremental catalog synchronization."""
+    import logging
+    logging.getLogger("delta_cards.tcgdex.catalog_sync").setLevel(logging.INFO)
+    from delta_cards.tcgdex.catalog_sync import CatalogSyncService
+
+    service = CatalogSyncService(
+        index_path=args.index_path,
+        cache_dir=args.cache_dir,
+        language=args.lang,
+        concurrency=args.concurrency,
+    )
+
+    if args.daemon:
+        console.print(Panel(
+            f"[bold cyan]Starting Daily Catalog Sync Daemon[/bold cyan]\n"
+            f"Interval: Every {args.interval_hours} hours | Language: {args.lang} | Index: {args.index_path}",
+            border_style="cyan",
+        ))
+        asyncio.run(service.run_daemon(interval_hours=args.interval_hours))
+    else:
+        console.print(Panel(
+            f"[bold cyan]Running Incremental Catalog Sync (One-Shot)[/bold cyan]\n"
+            f"Language: {args.lang} | Index: {args.index_path}",
+            border_style="cyan",
+        ))
+        summary = asyncio.run(service.sync())
+        if summary.updated:
+            console.print(
+                f"[bold green]✓ Sync complete! Added {summary.new_cards_added} new cards "
+                f"across {summary.new_sets_detected} sets in {summary.elapsed_seconds}s.[/bold green]"
+            )
+        else:
+            console.print(
+                f"[bold green]✓ Catalog is completely up-to-date. (0 new cards, checked in {summary.elapsed_seconds}s)[/bold green]"
+            )
+
+
+def run_alerts(args: argparse.Namespace, config) -> None:
+    """Decoupled alert worker: reads pending deals from DB, runs LLM verifier, and dispatches 1 alert every interval."""
+    if handle_test_discord(args):
+        return
+
+    from .alerts import AlertWorkerService
+    from .settings import get_settings
+    from .database.connection import init_db
+
+    engine = get_engine(getattr(args, "db_url", None))
+    init_db(engine)
+
+    app_settings = get_settings()
+    if getattr(args, "discord_webhook", None):
+        app_settings = app_settings.model_copy(update={"discord_webhook_url": args.discord_webhook})
+    if getattr(args, "no_discord", False):
+        app_settings = app_settings.model_copy(update={"discord_alerts_enabled": False})
+
+    interval = getattr(args, "interval", None)
+    if interval is None:
+        interval = app_settings.alert_interval
+
+    is_once = bool(getattr(args, "once", False))
+
+    console.print(
+        Panel.fit(
+            f"[bold cyan]Delta Cards Alert Worker[/bold cyan]\n"
+            f"[dim]Decoupled Periodic Alert Dispatcher & LLM Verifier[/dim]\n"
+            f"[yellow]Database:[/] {engine.url}\n"
+            f"[yellow]Discord Enabled:[/] {app_settings.discord_alerts_enabled}\n"
+            f"[yellow]Interval:[/] {interval}s ({round(interval / 60, 1)} min)\n"
+            f"[yellow]Worker Mode:[/] {'Single run (--once)' if is_once else 'Continuous Loop'}",
+            title="🔔 Delta Cards Alert Worker",
+            border_style="cyan",
+        )
+    )
+
+    worker = AlertWorkerService(engine=engine, settings=app_settings)
+    worker.run_loop(interval_seconds=interval, once=is_once)
+
+
 def main() -> None:
     args = parse_args()
     setup_logging(args.verbose)
-    config = load_and_filter_config(args)
 
-    if args.subcommand == "scrape":
-        run_scrape(args, config)
-    elif args.subcommand == "assign":
-        run_assign(args, config)
+    if args.subcommand == "build-index":
+        run_build_index(args, None)
+    elif args.subcommand == "export-models":
+        run_export_models(args, None)
+    elif args.subcommand == "sync-catalog":
+        run_sync_catalog(args, None)
     else:
-        run_all(args, config)
+        config = load_and_filter_config(args)
+        if args.subcommand == "scrape":
+            run_scrape(args, config)
+        elif args.subcommand == "assign":
+            run_assign(args, config)
+        elif args.subcommand == "alerts":
+            run_alerts(args, config)
+        else:
+            run_all(args, config)
 
 
 def main_scrape() -> None:
@@ -993,6 +1139,15 @@ def main_assign() -> None:
         sys.argv.insert(1, "assign")
     elif len(sys.argv) == 1:
         sys.argv.append("assign")
+    main()
+
+
+def main_alert() -> None:
+    """Direct CLI entrypoint for 'delta-cards-alert' / 'delta-cards-alerts'."""
+    if len(sys.argv) > 1 and sys.argv[1] not in ("alerts", "alert"):
+        sys.argv.insert(1, "alerts")
+    elif len(sys.argv) == 1:
+        sys.argv.append("alerts")
     main()
 
 

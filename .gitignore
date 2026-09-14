@@ -37,3 +37,8 @@ onnx/
 *.db
 *.db-wal
 *.db-shm
+data/
+
+# Logs and runtime files
+*.log
+*.deb

@@ -26,6 +26,8 @@ def offer_to_db_model(offer: OfferListing, now: Optional[datetime] = None) -> Wa
             data["assigned_state"] = "assigned"
         else:
             data["assigned_state"] = "pending"
+    if not data.get("alert_status"):
+        data["alert_status"] = "none"
     return WallapopOffers(**data)
 
 
@@ -305,6 +307,11 @@ def save_offers_to_db(
                         (WallapopOffers.assigned_state.is_not(None), WallapopOffers.assigned_state),
                         else_=stmt.excluded.assigned_state,
                     ),
+                    "alert_status": case(
+                        (stmt.excluded.alert_status.in_(["pending", "sent", "rejected"]), stmt.excluded.alert_status),
+                        (WallapopOffers.alert_status.is_not(None), WallapopOffers.alert_status),
+                        else_=stmt.excluded.alert_status,
+                    ),
                     "updated_at": now,
                 },
             )
@@ -337,6 +344,11 @@ def save_offers_to_db(
                         (WallapopOffers.assigned_state.is_not(None), WallapopOffers.assigned_state),
                         else_=stmt.excluded.assigned_state,
                     ),
+                    "alert_status": case(
+                        (stmt.excluded.alert_status.in_(["pending", "sent", "rejected"]), stmt.excluded.alert_status),
+                        (WallapopOffers.alert_status.is_not(None), WallapopOffers.alert_status),
+                        else_=stmt.excluded.alert_status,
+                    ),
                     "updated_at": now,
                 },
             )
@@ -350,6 +362,8 @@ def save_offers_to_db(
                 existing = session.exec(select(WallapopOffers).where(WallapopOffers.id == item.id)).first()
                 if existing and existing.assigned_state in ("assigned", "not_assigned") and item.assigned_state == "pending":
                     item.assigned_state = existing.assigned_state
+                if existing and existing.alert_status in ("sent", "pending", "rejected") and item.alert_status == "none":
+                    item.alert_status = existing.alert_status
                 session.merge(item)
             session.commit()
             return len(offers)
@@ -432,3 +446,53 @@ def get_unassigned_card_offers(
             statement = statement.limit(limit)
         results = session.exec(statement).all()
         return list(results)
+
+
+def get_pending_alert_offers(
+    engine: Optional[Engine] = None,
+    limit: Optional[int] = None,
+) -> List[WallapopOffers]:
+    """Retrieves offers with alert_status == 'pending' waiting to be evaluated and dispatched.
+
+    Orders them by scraped_at descending (newest offers first).
+    """
+    eng = engine or get_engine()
+    with Session(eng) as session:
+        statement = (
+            select(WallapopOffers)
+            .where(WallapopOffers.alert_status == "pending")
+            .order_by(WallapopOffers.scraped_at.desc())
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        results = session.exec(statement).all()
+        return list(results)
+
+
+def update_offer_alert_status(
+    offer_id: str,
+    status: str,
+    engine: Optional[Engine] = None,
+) -> bool:
+    """Updates the alert_status of an offer.
+
+    Args:
+        offer_id: ID of the Wallapop offer.
+        status: New alert status ('none', 'pending', 'sent', 'rejected').
+        engine: Optional SQLAlchemy engine.
+
+    Returns:
+        bool: True if offer was found and updated, False otherwise.
+    """
+    eng = engine or get_engine()
+    now = datetime.now(timezone.utc)
+    with Session(eng) as session:
+        statement = select(WallapopOffers).where(WallapopOffers.id == offer_id)
+        offer = session.exec(statement).first()
+        if not offer:
+            return False
+        offer.alert_status = status
+        offer.updated_at = now
+        session.add(offer)
+        session.commit()
+        return True

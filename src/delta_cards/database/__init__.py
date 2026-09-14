@@ -10,6 +10,8 @@ from .repository import (
     upsert_cardmarket_product,
     upsert_cardmarket_price,
     upsert_cardmarket_offers,
+    get_pending_alert_offers,
+    update_offer_alert_status,
 )
 
 __all__ = [
@@ -28,5 +30,7 @@ __all__ = [
     "upsert_cardmarket_product",
     "upsert_cardmarket_price",
     "upsert_cardmarket_offers",
+    "get_pending_alert_offers",
+    "update_offer_alert_status",
 ]
 
