@@ -203,7 +203,7 @@ For automated, persistent 24/7 background execution with auto-restart on crashes
 | Unit File | Type | Description |
 |---|---|---|
 | `delta-cards-scrape.service` | `oneshot` | Executes a single Wallapop scrape cycle |
-| `delta-cards-scrape.timer` | `timer` | Triggers the scrape service hourly (at `:00`) |
+| `delta-cards-scrape.timer` | `timer` | Triggers the scrape service every 30 minutes (at `:00` and `:30`) |
 | `delta-cards-assign.service` | `simple` | Continuous worker for AI recognition and pricing |
 | `delta-cards-alerts.service` | `simple` | Continuous worker for deal verification & Discord alerts |
 
@@ -227,7 +227,7 @@ For automated, persistent 24/7 background execution with auto-restart on crashes
 
 3. **Enable and start the services**:
    ```bash
-   # Enable and start the hourly scraper timer
+   # Enable and start the 30-minute scraper timer
    sudo systemctl enable --now delta-cards-scrape.timer
 
    # Enable and start the recognition worker
