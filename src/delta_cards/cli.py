@@ -68,13 +68,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test-discord", action="store_true", help="Send a test deal alert to Discord and exit")
     parser.add_argument("--alert-all-deals", action="store_true", help="Send Discord alerts for all matching deals")
 
+    parser.add_argument(
+        "--platform",
+        type=str,
+        choices=["wallapop", "vinted", "all"],
+        default="wallapop",
+        help="Platform to scrape: 'wallapop', 'vinted', or 'all' (default: wallapop)",
+    )
+    parser.add_argument("--test-discord-vinted", action="store_true", help="Send a test Vinted deal alert to Discord and exit")
+
     subparsers = parser.add_subparsers(dest="subcommand", help="Available subcommands")
 
-    # 1. Scrape subcommand: purely Wallapop offer fetching -> DB/files
+    # 1. Scrape subcommand: purely offer fetching -> DB/files
     scrape_parser = subparsers.add_parser(
         "scrape",
         parents=[common_parser],
-        help="Scrape Wallapop offers and save to DB/files without running card recognition",
+        help="Scrape card offers and save to DB/files without running card recognition",
+    )
+    scrape_parser.add_argument(
+        "--platform",
+        type=str,
+        choices=["wallapop", "vinted", "all"],
+        default="wallapop",
+        help="Platform to scrape: 'wallapop', 'vinted', or 'all' (default: wallapop)",
     )
     scrape_parser.add_argument("-o", "--output", type=str, default=None, help="Override output directory specified in config")
     scrape_parser.add_argument("-l", "--limit", type=int, default=None, help="Override max items to retrieve per search profile")
@@ -83,6 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     scrape_parser.add_argument("--no-db", action="store_true", help="Skip saving scraped offers to the database")
     scrape_parser.add_argument("--loop", action="store_true", help="Run scraper continuously in a loop")
     scrape_parser.add_argument("--interval", type=int, default=300, help="Seconds between scrape cycles in loop mode (default: 300)")
+    scrape_parser.add_argument("--test-discord-vinted", action="store_true", help="Send a test Vinted deal alert to Discord and exit")
 
     # 2. Assign subcommand: consumer worker reading unassigned offers from DB -> CardRecognitionPipeline
     assign_parser = subparsers.add_parser(
@@ -95,6 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
     assign_parser.add_argument("--no-discord", action="store_true", help="Skip sending Discord alert notifications")
     assign_parser.add_argument("--discord-webhook", type=str, default=None, help="Override Discord webhook URL")
     assign_parser.add_argument("--test-discord", action="store_true", help="Send a test deal alert to Discord and exit")
+    assign_parser.add_argument("--test-discord-vinted", action="store_true", help="Send a test Vinted deal alert to Discord and exit")
     assign_parser.add_argument("--alert-all-deals", action="store_true", help="Send Discord alerts for all matching deals")
     assign_parser.add_argument("--once", action="store_true", help="Process existing unassigned cards once and exit (default: stays on waiting for new offers)")
     assign_parser.add_argument("--loop", action="store_true", default=True, help="Keep worker running continuously (default: True)")
@@ -111,12 +129,20 @@ def build_parser() -> argparse.ArgumentParser:
     alerts_parser.add_argument("--no-discord", action="store_true", help="Skip sending Discord alert notifications")
     alerts_parser.add_argument("--discord-webhook", type=str, default=None, help="Override Discord webhook URL")
     alerts_parser.add_argument("--test-discord", action="store_true", help="Send a test deal alert to Discord and exit")
+    alerts_parser.add_argument("--test-discord-vinted", action="store_true", help="Send a test Vinted deal alert to Discord and exit")
 
     # 4. All subcommand: explicit full pipeline (scrape + assign + check deals)
     all_parser = subparsers.add_parser(
         "all",
         parents=[common_parser],
-        help="Run complete pipeline: scrape Wallapop offers, assign cards, and check deals",
+        help="Run complete pipeline: scrape offers, assign cards, and check deals",
+    )
+    all_parser.add_argument(
+        "--platform",
+        type=str,
+        choices=["wallapop", "vinted", "all"],
+        default="wallapop",
+        help="Platform to scrape: 'wallapop', 'vinted', or 'all' (default: wallapop)",
     )
     all_parser.add_argument("-o", "--output", type=str, default=None, help="Override output directory")
     all_parser.add_argument("-l", "--limit", type=int, default=None, help="Override max items to retrieve")
@@ -244,9 +270,13 @@ def load_and_filter_config(args: argparse.Namespace):
 
 
 def handle_test_discord(args: argparse.Namespace) -> bool:
-    """Executes Discord test notification if --test-discord is passed. Returns True if handled."""
-    if not getattr(args, "test_discord", False):
+    """Executes Discord test notification if --test-discord or --test-discord-vinted is passed. Returns True if handled."""
+    test_disc = getattr(args, "test_discord", False)
+    test_disc_vinted = getattr(args, "test_discord_vinted", False)
+    if not (test_disc or test_disc_vinted):
         return False
+
+    is_vinted = test_disc_vinted or (getattr(args, "platform", None) == "vinted")
 
     from .alerts import DiscordAlertService
     from .models import OfferListing
@@ -264,32 +294,52 @@ def handle_test_discord(args: argparse.Namespace) -> bool:
         )
         sys.exit(1)
 
-    console.print("[bold cyan]Testing Discord Alert Webhook...[/bold cyan]")
+    target_name = "Vinted" if is_vinted else "Wallapop"
+    console.print(f"[bold cyan]Testing Discord Alert Webhook ({target_name})...[/bold cyan]")
     masked = webhook_url[:35] + "..." if len(webhook_url) > 35 else webhook_url
     console.print(f"  • Webhook URL: [cyan]{masked}[/cyan]")
+    console.print(f"  • Platform: [yellow]{target_name}[/yellow]")
     console.print(f"  • Min saving %: [yellow]{settings.alert_min_saving_percentage}%[/yellow]")
     console.print(f"  • Min saving €: [yellow]{settings.alert_min_saving_absolute} €[/yellow]")
     console.print(f"  • Operator: [yellow]{settings.alert_condition_operator}[/yellow]")
 
-    test_offer = OfferListing(
-        id="test_deal_alert",
-        title="Charizard Base Set Holo 4/102 (Test Alert)",
-        price=45.0,
-        product_type="single_card",
-        location="Madrid, Spain",
-        link="https://es.wallapop.com",
-        image_url="https://images.pokemontcg.io/base1/4_hires.png",
-        cardmarket_url="https://www.cardmarket.com/en/Pokemon/Products/Singles/Base-Set/Charizard",
-        cardmarket_low_price=120.0,
-        cardmarket_avg_price=140.0,
-        cardmarket_price_spain=140.0,
-        cardmarket_price_all=140.0,
-    )
+    if is_vinted:
+        test_offer = OfferListing(
+            id="vinted_test_deal_alert",
+            title="Charizard Base Set Holo 4/102 (Test Alert Vinted)",
+            price=45.0,
+            product_type="single_card",
+            platform="vinted",
+            location="Madrid, Spain",
+            link="https://www.vinted.es/items/10011923266-charizard-base-set",
+            image_url="https://images.pokemontcg.io/base1/4_hires.png",
+            cardmarket_url="https://www.cardmarket.com/en/Pokemon/Products/Singles/Base-Set/Charizard",
+            cardmarket_low_price=120.0,
+            cardmarket_avg_price=140.0,
+            cardmarket_price_spain=140.0,
+            cardmarket_price_all=140.0,
+        )
+    else:
+        test_offer = OfferListing(
+            id="test_deal_alert",
+            title="Charizard Base Set Holo 4/102 (Test Alert Wallapop)",
+            price=45.0,
+            product_type="single_card",
+            platform="wallapop",
+            location="Madrid, Spain",
+            link="https://es.wallapop.com",
+            image_url="https://images.pokemontcg.io/base1/4_hires.png",
+            cardmarket_url="https://www.cardmarket.com/en/Pokemon/Products/Singles/Base-Set/Charizard",
+            cardmarket_low_price=120.0,
+            cardmarket_avg_price=140.0,
+            cardmarket_price_spain=140.0,
+            cardmarket_price_all=140.0,
+        )
 
     service = DiscordAlertService(settings=settings)
     sent_count = service.process_and_alert_offers([test_offer])
     if sent_count > 0:
-        console.print("[bold green]✓ Test Discord alert sent successfully! Check your Discord channel.[/bold green]")
+        console.print(f"[bold green]✓ Test Discord alert for {target_name} sent successfully! Check your Discord channel.[/bold green]")
     else:
         console.print("[bold red]✗ Failed to send Discord alert. Check logs or verify that DISCORD_ALERTS_ENABLED=true.[/bold red]")
     return True
@@ -569,6 +619,7 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
                 cardmarket_avg_price=avg_p,
                 cardmarket_price_all=avg_p or low_p,
                 tcgdex_id=item.tcgdex_id,
+                platform=getattr(item, "platform", "wallapop") or "wallapop",
                 assigned_state=item.assigned_state or "pending",
             )
         return item
@@ -587,19 +638,31 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
 
 
 def run_scrape(args: argparse.Namespace, config) -> None:
-    """Scrapes Wallapop offers and saves them to DB incrementally without running card recognition."""
-    scraper = CardOffersScraper(config)
+    """Scrapes offers (Wallapop, Vinted, or all) and saves them to DB incrementally without running card recognition."""
+    target_platform = getattr(args, "platform", "wallapop") or "wallapop"
+    scrape_wallapop = target_platform in ("wallapop", "all")
+    scrape_vinted = target_platform in ("vinted", "all")
+
+    platform_desc = (
+        "Wallapop & Vinted" if target_platform == "all"
+        else ("Vinted" if target_platform == "vinted" else "Wallapop")
+    )
+
+    wallapop_scraper = CardOffersScraper(config) if scrape_wallapop else None
+    vinted_scraper = None
+    if scrape_vinted:
+        from .vinted import VintedScraper
+        vinted_scraper = VintedScraper(config)
 
     console.print(
         Panel.fit(
             f"[bold cyan]{config.name}[/bold cyan]\n"
             f"[dim]{config.description or ''}[/dim]\n"
-            f"[yellow]Location:[/] {config.wallapop_settings.location_name} "
-            f"({config.wallapop_settings.latitude}, {config.wallapop_settings.longitude})\n"
+            f"[yellow]Platform:[/] {platform_desc}\n"
             f"[yellow]Profiles:[/] {len(config.search_profiles)} configured\n"
             f"[yellow]Output Dir:[/] {config.output_settings.output_dir}\n"
             f"[yellow]Loop Mode:[/] {'Enabled (' + str(getattr(args, 'interval', 300)) + 's interval)' if getattr(args, 'loop', False) else 'Single run'}",
-            title="🃏 Delta Cards Scraper (Wallapop Offers)",
+            title=f"🃏 Delta Cards Scraper ({platform_desc})",
             border_style="cyan",
         )
     )
@@ -622,17 +685,42 @@ def run_scrape(args: argparse.Namespace, config) -> None:
                     db_error = str(exc)
                     logger.warning(f"Error saving batch to DB: {exc}")
 
-        with console.status("[bold cyan]Starting Wallapop scraper...[/bold cyan]", spinner="dots") as status:
-            progress_cb = _create_scraper_progress_callback(status, db_save_enabled)
-            offers = asyncio.run(
-                scraper.run(
-                    progress_callback=progress_cb,
-                    on_batch=handle_scraped_batch,
-                )
-            )
+        offers: List[OfferListing] = []
+        saved_files: Dict[str, Any] = {}
 
-            status.update("[bold cyan]Saving scraped data to files...[/bold cyan]")
-            saved_files = scraper.save_results(offers)
+        if wallapop_scraper:
+            try:
+                with console.status("[bold cyan]Starting Wallapop scraper...[/bold cyan]", spinner="dots") as status:
+                    progress_cb = _create_scraper_progress_callback(status, db_save_enabled)
+                    w_offers = asyncio.run(
+                        wallapop_scraper.run(
+                            progress_callback=progress_cb,
+                            on_batch=handle_scraped_batch,
+                        )
+                    )
+                    status.update("[bold cyan]Saving Wallapop scraped data to files...[/bold cyan]")
+                    saved_files.update(wallapop_scraper.save_results(w_offers))
+                    offers.extend(w_offers)
+            except Exception as exc:
+                logger.error(f"Error during Wallapop scraping: {exc}", exc_info=True)
+                console.print(f"[bold red]Wallapop scraper error:[/] {exc}")
+
+        if vinted_scraper:
+            try:
+                with console.status("[bold cyan]Starting Vinted scraper...[/bold cyan]", spinner="dots") as status:
+                    progress_cb = _create_scraper_progress_callback(status, db_save_enabled)
+                    v_offers = asyncio.run(
+                        vinted_scraper.run(
+                            progress_callback=progress_cb,
+                            on_batch=handle_scraped_batch,
+                        )
+                    )
+                    status.update("[bold cyan]Saving Vinted scraped data to files...[/bold cyan]")
+                    saved_files.update(vinted_scraper.save_results(v_offers))
+                    offers.extend(v_offers)
+            except Exception as exc:
+                logger.error(f"Error during Vinted scraping: {exc}", exc_info=True)
+                console.print(f"[bold red]Vinted scraper error:[/] {exc}")
 
         db_note = None
         if db_save_enabled:
@@ -1148,6 +1236,17 @@ def main_alert() -> None:
         sys.argv.insert(1, "alerts")
     elif len(sys.argv) == 1:
         sys.argv.append("alerts")
+    main()
+
+
+def main_scrape_vinted() -> None:
+    """Direct CLI entrypoint for 'delta-cards-scrape-vinted'."""
+    if len(sys.argv) > 1 and sys.argv[1] != "scrape":
+        sys.argv.insert(1, "scrape")
+    elif len(sys.argv) == 1:
+        sys.argv.append("scrape")
+    if "--platform" not in sys.argv:
+        sys.argv.extend(["--platform", "vinted"])
     main()
 
 

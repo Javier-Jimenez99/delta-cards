@@ -69,6 +69,14 @@ class WallapopSettings(BaseModel):
     delay_between_requests_ms: int = 1500
 
 
+class VintedSettings(BaseModel):
+    """General connection settings for Vinted."""
+    domain: str = "vinted.es"
+    order_by: str = "newest_first"
+    delay_between_requests_ms: int = 2000
+    enabled: bool = True
+
+
 class SearchProfile(BaseModel):
     """Configuration for a product search profile supporting multiple query variations."""
     id: str
@@ -106,6 +114,7 @@ class SearchConfig(BaseModel):
     name: str = "Card Search Config"
     description: Optional[str] = None
     wallapop_settings: WallapopSettings = Field(default_factory=WallapopSettings)
+    vinted_settings: VintedSettings = Field(default_factory=VintedSettings)
     search_profiles: List[SearchProfile] = Field(default_factory=list)
     output_settings: OutputSettings = Field(default_factory=OutputSettings)
 
@@ -117,6 +126,7 @@ class OfferListing(BaseModel):
     price: float
     currency: str = "EUR"
     product_type: str
+    platform: str = "wallapop"
     location: Optional[str] = None
     country: Optional[str] = None
     description: Optional[str] = None
@@ -139,4 +149,5 @@ class OfferListing(BaseModel):
     tcgdex_id: Optional[str] = None
     assigned_state: str = "pending"
     alert_status: str = "none"
+
 

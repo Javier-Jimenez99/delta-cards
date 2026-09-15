@@ -193,6 +193,50 @@ def test_build_discord_embed():
     assert "📈" not in links_val
 
 
+def test_build_discord_embed_vinted():
+    """Verify embed formatting when offer is from Vinted."""
+    offer = OfferListing(
+        id="vinted_12345",
+        title="Umbreon GX 15/149",
+        price=15.0,
+        product_type="single_card",
+        platform="vinted",
+        location="Madrid, Spain",
+        link="https://www.vinted.es/items/12345-umbreon-gx",
+        image_url="https://images1.vinted.net/item.jpg",
+        cardmarket_url="https://www.cardmarket.com/es/Pokemon/Products/Singles/Sun-Moon/Umbreon-GX",
+        cardmarket_avg_price=25.0,
+        cardmarket_low_price=20.0,
+    )
+    res = AlertConditionResult(
+        is_triggered=True,
+        savings_absolute=10.0,
+        savings_percentage=40.0,
+        offer_price=15.0,
+        market_price=25.0,
+        reason="Triggered",
+    )
+
+    embed = build_discord_embed(offer, res)
+    assert embed["title"] == "Oferta: Umbreon GX 15/149"
+    assert embed["url"] == offer.link
+
+    fields_dict = {f["name"]: f["value"] for f in embed["fields"]}
+
+    # Row 1: Vinted emoji and name
+    assert "<:vinted:1549420019518013470> Vinted" in fields_dict
+    assert "15.00 €" in fields_dict["<:vinted:1549420019518013470> Vinted"]
+    assert "<:wallapop:1548103689477038080> Wallapop" not in fields_dict
+
+    # Row 3: Links with 'Oferta en Vinted'
+    assert "🔗 Enlaces" in fields_dict
+    links_val = fields_dict["🔗 Enlaces"]
+    assert "[Oferta en Vinted]" in links_val
+    assert "[Oferta en Wallapop]" not in links_val
+    assert offer.link in links_val
+    assert offer.cardmarket_url in links_val
+
+
 def test_build_discord_embed_product_id_fallback():
     """Verify fallback behavior when prices and URLs are missing or product_id fallback is used."""
     offer = OfferListing(

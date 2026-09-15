@@ -9,6 +9,12 @@
     "order_by": "newest",
     "delay_between_requests_ms": 1500
   },
+  "vinted_settings": {
+    "domain": "vinted.es",
+    "order_by": "newest_first",
+    "delay_between_requests_ms": 2000,
+    "enabled": true
+  },
   "search_profiles": [
     {
       "id": "booster_box",

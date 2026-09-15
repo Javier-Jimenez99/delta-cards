@@ -288,7 +288,9 @@ class CandidateOCRCache:
             cached["name"] = card_info.get("name") or cached.get("name", "")
             cached["local_id"] = card_info.get("local_id") or cached.get("local_id", "")
             cached["total_cards"] = card_info.get("total_cards") or cached.get("total_cards", "")
-            cached["card_fraction"] = card_info.get("card_fraction") or cached.get("card_fraction", "")
+            fractions = cached.get("fractions") or []
+            fallback_frac = fractions[0][2] if fractions and len(fractions[0]) > 2 else ""
+            cached["card_fraction"] = card_info.get("card_fraction") or cached.get("card_fraction") or fallback_frac
             return cached
 
         # 2. Slow path (only first time): run OCR on the clean scan
@@ -404,6 +406,34 @@ class CandidateOCRCache:
                     }
         except Exception as e:
             logger.debug(f"Could not load metadata for {tcgdex_id} from SQLite: {e}")
+
+        # Fallback: query TCGdex SDK online
+        try:
+            from tcgdexsdk import TCGdex
+            card = TCGdex(clean_lang).card.getSync(tcgdex_id)
+            if card:
+                set_obj = getattr(card, "set", None)
+                set_id = getattr(set_obj, "id", "") if set_obj else ""
+                set_name = getattr(set_obj, "name", "") if set_obj else ""
+                card_count = getattr(set_obj, "cardCount", None) if set_obj else None
+                total_cards = str(getattr(card_count, "official", "") or "") if card_count else ""
+                local_id = str(getattr(card, "localId", "") or "")
+                card_fraction = f"{local_id}/{total_cards}" if local_id and total_cards else ""
+                return {
+                    "tcgdex_id": tcgdex_id,
+                    "lang": clean_lang,
+                    "name": getattr(card, "name", ""),
+                    "set_id": set_id,
+                    "set_name": set_name,
+                    "local_id": local_id,
+                    "total_cards": total_cards,
+                    "card_fraction": card_fraction,
+                    "hp": getattr(card, "hp", None),
+                    "image_url": getattr(card, "image", "") or "",
+                }
+        except Exception as e:
+            logger.debug(f"Could not fetch metadata for {tcgdex_id} from tcgdexsdk: {e}")
+
         return None
 
     async def get_reconstructed_card(

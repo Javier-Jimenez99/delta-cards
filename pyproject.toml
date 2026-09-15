@@ -36,6 +36,7 @@ dependencies = [
 [project.scripts]
 delta-cards = "delta_cards:main"
 delta-cards-scrape = "delta_cards:main_scrape"
+delta-cards-scrape-vinted = "delta_cards:main_scrape_vinted"
 delta-cards-assign = "delta_cards:main_assign"
 delta-cards-alert = "delta_cards:main_alert"
 

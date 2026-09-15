@@ -1,8 +1,9 @@
 """Delta Cards: Marketplace card offers scraper configured via JSON."""
 
-from .models import SearchConfig, OfferListing, SearchProfile, WallapopSettings, OutputSettings
+from .models import SearchConfig, OfferListing, SearchProfile, WallapopSettings, VintedSettings, OutputSettings
 from .config_loader import load_config
 from .wallapop import CardSearchClient, CardOffersScraper, WallapopClient, WallapopScraper, run_scraper
+from .vinted import VintedSearchClient, VintedScraper
 from .tcgdex import assign_tcgdex_to_offers, enrich_card_offers_in_db, is_card_offer, build_cardmarket_url
 from .recognition import (
     CardNotDetectedError,
@@ -25,13 +26,14 @@ from .alerts import (
     evaluate_alert_condition,
     AlertConditionResult,
 )
-from .cli import main, main_scrape, main_assign, main_alert
+from .cli import main, main_scrape, main_assign, main_alert, main_scrape_vinted
 
 __all__ = [
     "SearchConfig",
     "OfferListing",
     "SearchProfile",
     "WallapopSettings",
+    "VintedSettings",
     "OutputSettings",
     "load_config",
     "CardSearchClient",
@@ -39,6 +41,8 @@ __all__ = [
     "WallapopClient",
     "WallapopScraper",
     "run_scraper",
+    "VintedSearchClient",
+    "VintedScraper",
     "assign_tcgdex_to_offers",
     "enrich_card_offers_in_db",
     "is_card_offer",
@@ -65,4 +69,5 @@ __all__ = [
     "main_scrape",
     "main_assign",
     "main_alert",
+    "main_scrape_vinted",
 ]

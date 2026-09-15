@@ -1,6 +1,6 @@
 # Delta Cards 🃏
 
-A Python tool to scrape and monitor card offers on Wallapop, built using **WallaPy** and configured entirely through JSON.
+A Python tool to scrape and monitor card offers on **Wallapop** and **Vinted**, built with modular providers, AI card recognition, and configured entirely through JSON.
 
 Designed initially for **Pokémon cards**, with support for any card game or product type defined in the JSON configuration:
 - **Booster Boxes / Displays**
@@ -13,10 +13,11 @@ Designed initially for **Pokémon cards**, with support for any card game or pro
 
 ## 🚀 Features
 
-- **Pure JSON Configuration**: All search queries, positive keywords, excluded negative keywords, price ranges, items limit, and geolocation coordinates are defined in JSON. **No hardcoded keywords or condition flags exist in the Python code.**
-- **Modular Provider Architecture**: Wallapop integration is modularized in its own `wallapop/` module (`src/delta_cards/wallapop/`), making it simple to add more platforms in the future.
-- **WallaPy Integration**: Uses WallaPy's Wallapop client with configurable delays, custom headers, and geolocation coordinates.
-- **Clean Single Offers Export**: Exports structured offer metadata to both **JSON** and **CSV** files (`id`, `title`, `price`, `currency`, `product_type`, `location`, `link`, `image_url`, `published_date`, `seller_link`, etc.).
+- **Pure JSON Configuration**: All search queries, positive keywords, excluded negative keywords, price ranges, items limit, and settings are defined in JSON. **No hardcoded keywords or condition flags exist in the Python code.**
+- **Modular Multi-Platform Architecture**: Wallapop and Vinted integrations are modularized in their own provider packages (`src/delta_cards/wallapop/` and `src/delta_cards/vinted/`), feeding a unified database and AI evaluation pipeline.
+- **WallaPy & Vinted Scrapers**: Efficient, zero-AI scraping with configurable delays, custom headers, and geolocation/catalog filters.
+- **Differentiated Discord Alerts**: Rich embeds with custom emojis and links tailored specifically for Wallapop (`<:wallapop:...>`) and Vinted (`<:vinted:...>`).
+- **Clean Single Offers Export**: Exports structured offer metadata to both **JSON** and **CSV** files (`id`, `platform`, `title`, `price`, `currency`, `product_type`, `location`, `link`, `image_url`, `published_date`, etc.).
 - **Rich CLI Interface**: Color-coded terminal progress and summary table showing prices and counts by product type.
 
 ---
@@ -59,6 +60,12 @@ You can customize searches by editing `config/pokemon_cards_search.json` or prov
     "location_name": "Madrid, Spain",
     "order_by": "newest",
     "delay_between_requests_ms": 1500
+  },
+  "vinted_settings": {
+    "domain": "vinted.es",
+    "order_by": "newest_first",
+    "delay_between_requests_ms": 2000,
+    "enabled": true
   },
   "search_profiles": [
     {
@@ -140,15 +147,22 @@ You can customize searches by editing `config/pokemon_cards_search.json` or prov
 Delta Cards is built as a decoupled pipeline with **three independent services** that communicate through a shared database, alongside a unified all-in-one command:
 
 ### 1. Scraper Service (`delta-cards scrape`)
-Fetches listings from Wallapop and stores them in the database (`WallapopOffers` table with `assigned_state = 'pending'`) and optional JSON/CSV files. Runs fast with zero OCR/AI overhead:
+Fetches listings from Wallapop and/or Vinted and stores them in the database (`WallapopOffers` table with `platform` and `assigned_state = 'pending'`) and optional JSON/CSV files. Runs fast with zero OCR/AI overhead:
 ```bash
-# Run a single scrape cycle
+# Scrape Wallapop (default platform)
 uv run delta-cards scrape -p single_card
 
+# Scrape Vinted
+uv run delta-cards scrape --platform vinted -p single_card
+# (or use the dedicated standalone binary: uv run delta-cards-scrape-vinted -p single_card)
+
+# Scrape both platforms in sequence
+uv run delta-cards scrape --platform all
+
 # Run scraper continuously in loop mode (e.g. polls every 5 minutes)
-uv run delta-cards scrape --loop --interval 300
+uv run delta-cards scrape --platform all --loop --interval 300
 ```
-*(Also available as standalone binary: `uv run delta-cards-scrape`)*
+*(Also available as standalone binaries: `uv run delta-cards-scrape` and `uv run delta-cards-scrape-vinted`)*
 
 ### 2. Card Assigner & Pricing Service (`delta-cards assign`)
 Persistent consumer worker that stays **always on waiting for offers**. It polls the database for unassigned listings, runs the vision & AI pipeline (YOLOv8 card detection, DINOv3 + USearch similarity search, RapidOCR, and fuzzy matching), retrieves live Cardmarket/TCGdex market prices (`--scrape-prices`), and flags potential deals (`is_deal = True`):
@@ -165,7 +179,7 @@ uv run delta-cards assign --once --scrape-prices
 *(Also available as standalone binary: `uv run delta-cards-assign`)*
 
 ### 3. Alert Dispatcher Service (`delta-cards alerts`)
-Decoupled worker that scans the database for pending deal opportunities (`alert_status = 'pending'`). It passes candidates through an LLM verifier to prevent false positives (e.g., card lots, proxies, damaged cards) and dispatches rich notifications to your configured Discord webhook:
+Decoupled worker that scans the database for pending deal opportunities (`alert_status = 'pending'`). It passes candidates through an LLM verifier to prevent false positives (e.g., card lots, proxies, damaged cards) and dispatches rich notifications to your configured Discord webhook with platform-specific branding (Wallapop or Vinted):
 ```bash
 # Starts the continuous alert worker:
 uv run delta-cards alerts
@@ -173,15 +187,18 @@ uv run delta-cards alerts
 # Run once and exit:
 uv run delta-cards alerts --once
 
-# Send a test alert to verify Discord webhook connectivity:
+# Send a test alert to verify Discord webhook connectivity (Wallapop format):
 uv run delta-cards alerts --test-discord
+
+# Send a test alert formatted for Vinted:
+uv run delta-cards alerts --test-discord-vinted
 ```
 *(Also available as standalone binary: `uv run delta-cards-alert`)*
 
 ### 4. Running in the Background (Daemons via `nohup`)
 To run all three services in the background without keeping terminals open:
 ```bash
-nohup uv run delta-cards scrape --loop > scraper.log 2>&1 &
+nohup uv run delta-cards scrape --platform all --loop > scraper.log 2>&1 &
 nohup uv run delta-cards assign --scrape-prices > assign.log 2>&1 &
 nohup uv run delta-cards alerts > alerts.log 2>&1 &
 ```
@@ -202,8 +219,8 @@ For automated, persistent 24/7 background execution with auto-restart on crashes
 
 | Unit File | Type | Description |
 |---|---|---|
-| `delta-cards-scrape.service` | `oneshot` | Executes a single Wallapop scrape cycle |
-| `delta-cards-scrape.timer` | `timer` | Triggers the scrape service every 30 minutes (at `:00` and `:30`) |
+| `delta-cards-scrape.service` | `oneshot` | Executes a sequential scrape cycle (Wallapop first, then Vinted) |
+| `delta-cards-scrape.timer` | `timer` | Triggers the scraper service every 30 minutes (at `:00` and `:30`) |
 | `delta-cards-assign.service` | `simple` | Continuous worker for AI recognition and pricing |
 | `delta-cards-alerts.service` | `simple` | Continuous worker for deal verification & Discord alerts |
 
@@ -227,7 +244,7 @@ For automated, persistent 24/7 background execution with auto-restart on crashes
 
 3. **Enable and start the services**:
    ```bash
-   # Enable and start the 30-minute scraper timer
+   # Enable and start the 30-minute sequential scraper timer (Wallapop + Vinted)
    sudo systemctl enable --now delta-cards-scrape.timer
 
    # Enable and start the recognition worker
@@ -268,21 +285,24 @@ For automated, persistent 24/7 background execution with auto-restart on crashes
 ## 🐍 Python Library Usage
 
 ```python
-from delta_cards import CardOffersScraper, load_config
+import asyncio
+from delta_cards import CardOffersScraper, VintedScraper, load_config
 
 # Load JSON configuration
 config = load_config("config/pokemon_cards_search.json")
 
-# Initialize and run scraper (from Wallapop package)
-scraper = CardOffersScraper(config)
-import asyncio
-offers = asyncio.run(scraper.run())
+# 1. Scrape Wallapop
+wallapop_scraper = CardOffersScraper(config)
+wallapop_offers = asyncio.run(wallapop_scraper.run())
+wallapop_scraper.save_results(wallapop_offers)
 
-# Save to JSON and CSV
-scraper.save_results(offers)
+# 2. Scrape Vinted
+vinted_scraper = VintedScraper(config)
+vinted_offers = asyncio.run(vinted_scraper.run())
+vinted_scraper.save_results(vinted_offers)
 
-for offer in offers[:5]:
-    print(f"{offer.title} - {offer.price} {offer.currency} ({offer.link})")
+for offer in vinted_offers[:5]:
+    print(f"[{offer.platform.upper()}] {offer.title} - {offer.price} {offer.currency} ({offer.link})")
 ```
 
 ---

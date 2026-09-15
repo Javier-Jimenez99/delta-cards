@@ -106,6 +106,11 @@ class WallapopOffers(SQLModel, table=True):
     price: float = Field(index=True, description="Price in currency units")
     currency: str = Field(default="EUR", description="Currency code (e.g. EUR)")
     product_type: str = Field(index=True, description="Product category (booster_box, booster_pack, etc.)")
+    platform: str = Field(
+        default="wallapop",
+        index=True,
+        description="Marketplace platform ('wallapop', 'vinted')",
+    )
     location: Optional[str] = Field(default=None, description="City/locality of seller")
     country: Optional[str] = Field(default=None, description="Country or state code")
     description: Optional[str] = Field(default=None, description="Full item description")

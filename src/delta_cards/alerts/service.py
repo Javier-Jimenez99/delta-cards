@@ -162,8 +162,21 @@ def build_discord_embed(
     Type (Carta, Paquete, Caja, etc.) - Location
     Links to wallapop offer and to cardmarket product page.
     """
-    # Ensure Wallapop link is normalized
-    wallapop_url = (offer.link or "").replace("https://wallapop.com/", "https://es.wallapop.com/")
+    # Determine platform
+    is_vinted = (getattr(offer, "platform", None) == "vinted") or ("vinted" in (offer.link or "").lower())
+
+    if is_vinted:
+        offer_url = offer.link or ""
+        platform_name = "Vinted"
+        platform_emoji = "<:vinted:1549420019518013470>"
+        offer_link_text = "Oferta en Vinted"
+    else:
+        # Ensure Wallapop link is normalized
+        wallapop_url = (offer.link or "").replace("https://wallapop.com/", "https://es.wallapop.com/")
+        offer_url = wallapop_url
+        platform_name = "Wallapop"
+        platform_emoji = "<:wallapop:1548103689477038080>"
+        offer_link_text = "Oferta en Wallapop"
 
     # Resolve Cardmarket URL (either explicitly set or built from product ID)
     cardmarket_url = offer.cardmarket_url
@@ -186,15 +199,15 @@ def build_discord_embed(
     location_str = offer.location or "N/A"
 
     fields = [
-        {"name": "<:wallapop:1548103689477038080> Wallapop", "value": f"**{offer.price:.2f} €**", "inline": True},
+        {"name": f"{platform_emoji} {platform_name}", "value": f"**{offer.price:.2f} €**", "inline": True},
         {"name": "<:cardmarket:1548103777750487056> Precio medio", "value": f"**{avg_str}**", "inline": True},
         {"name": "<:cardmarket:1548103777750487056> Precio mínimo", "value": f"**{low_str}**", "inline": True},
         {"name": "📦 Tipo", "value": f"**{type_label}**", "inline": True},
         {"name": "📍 Ubicación", "value": f"**{location_str}**", "inline": True},
     ]
 
-    # Enlaces a la oferta en Wallapop y a la página de Cardmarket
-    links = [f"[Oferta en Wallapop]({wallapop_url})"]
+    # Enlaces a la oferta y a la página de Cardmarket
+    links = [f"[{offer_link_text}]({offer_url})"]
     if cardmarket_url:
         links.append(f"[Producto en Cardmarket]({cardmarket_url})")
     links_str = " • ".join(links)
@@ -244,7 +257,7 @@ def build_discord_embed(
 
     embed: Dict[str, Any] = {
         "title": f"Oferta: {offer.title[:200]}",
-        "url": wallapop_url,
+        "url": offer_url,
         "description": links_str,
         "color": 0x2ECC71,  # Emerald Green
         "fields": fields,
@@ -582,6 +595,7 @@ class AlertWorkerService:
                 cardmarket_price_all=ref_market_price,
                 tcgdex_id=offer.tcgdex_id,
                 assigned_state=offer.assigned_state or "assigned",
+                platform=getattr(offer, "platform", "wallapop") or "wallapop",
                 alert_status="pending",
             )
 

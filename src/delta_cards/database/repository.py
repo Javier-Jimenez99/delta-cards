@@ -21,6 +21,8 @@ def offer_to_db_model(offer: OfferListing, now: Optional[datetime] = None) -> Wa
     data = {k: v for k, v in offer.model_dump().items() if k in valid_fields}
     data["scraped_at"] = now_utc
     data["updated_at"] = now_utc
+    if not data.get("platform"):
+        data["platform"] = getattr(offer, "platform", "wallapop") or "wallapop"
     if not data.get("assigned_state") or data["assigned_state"] == "pending":
         if data.get("cardmarket_product_id"):
             data["assigned_state"] = "assigned"
@@ -292,6 +294,7 @@ def save_offers_to_db(
                 set_={
                     "title": stmt.excluded.title,
                     "price": stmt.excluded.price,
+                    "platform": func.coalesce(stmt.excluded.platform, WallapopOffers.platform),
                     "is_reserved": stmt.excluded.is_reserved,
                     "shipping_available": stmt.excluded.shipping_available,
                     "description": stmt.excluded.description,
@@ -329,6 +332,7 @@ def save_offers_to_db(
                 set_={
                     "title": stmt.excluded.title,
                     "price": stmt.excluded.price,
+                    "platform": func.coalesce(stmt.excluded.platform, WallapopOffers.platform),
                     "is_reserved": stmt.excluded.is_reserved,
                     "shipping_available": stmt.excluded.shipping_available,
                     "description": stmt.excluded.description,

@@ -81,6 +81,13 @@ def init_db(engine: Optional[Engine] = None) -> None:
         if "WallapopOffers" in table_names:
             existing_cols = {c["name"] for c in insp.get_columns("WallapopOffers")}
             with eng.begin() as conn:
+                if "platform" not in existing_cols:
+                    conn.execute(text('ALTER TABLE "WallapopOffers" ADD COLUMN platform VARCHAR DEFAULT \'wallapop\''))
+                    conn.execute(text('UPDATE "WallapopOffers" SET platform = \'wallapop\' WHERE platform IS NULL OR platform = \'\''))
+                    try:
+                        conn.execute(text('CREATE INDEX IF NOT EXISTS ix_WallapopOffers_platform ON "WallapopOffers" (platform)'))
+                    except Exception:
+                        pass
                 if "alert_status" not in existing_cols:
                     conn.execute(text('ALTER TABLE "WallapopOffers" ADD COLUMN alert_status VARCHAR DEFAULT \'none\''))
                     try:
