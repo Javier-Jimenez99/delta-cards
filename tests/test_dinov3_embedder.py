@@ -3,13 +3,7 @@
 import numpy as np
 import pytest
 
-from delta_cards.recognition.dinov3_embedder import DINOv3Embedder, get_physical_cpu_cores
-
-
-def test_get_physical_cpu_cores():
-    cores = get_physical_cpu_cores()
-    assert isinstance(cores, int)
-    assert cores >= 1
+from delta_cards.recognition.dinov3_embedder import DINOv3Embedder
 
 
 def test_dinov3_embed_image():

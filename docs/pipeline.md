@@ -56,7 +56,7 @@ Before any image downloading or AI model computation occurs:
 
 ---
 
-### Step 1: Visual Card Isolation & Perspective Rectification (`src/delta_cards/recognition/visual_detector.py`)
+### Step 1: Card Isolation (`src/delta_cards/recognition/card_isolator.py`)
 
 Marketplace photos are often taken at awkward angles, with clutter, hands, or protective sleeves.
 

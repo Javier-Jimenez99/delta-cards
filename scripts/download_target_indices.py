@@ -29,7 +29,7 @@ import os
 import sys
 import time
 
-from delta_cards.recognition.index_builder import build_index
+from delta_cards.recognition.vector_index import build_index
 
 logging.basicConfig(
     level=logging.INFO,

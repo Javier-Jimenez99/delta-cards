@@ -14,8 +14,7 @@ from typing import List, Optional
 
 from tcgdexsdk import TCGdex
 
-from ..recognition.index_builder import build_index
-from ..recognition.vector_index import USearchCardIndex
+from ..recognition.vector_index import USearchCardIndex, build_index
 
 logger = logging.getLogger(__name__)
 

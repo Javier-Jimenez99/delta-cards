@@ -48,13 +48,6 @@ def test_is_card_offer_strict_filtering():
     assert is_card_offer("single_card", title="Pikachu 057/191 Chispas Fulgurantes") is True
 
 
-def test_card_ocr_fraction_extraction():
-    """Verifies CardOCR extraction of card number and fractions."""
-    ocr = CardOCR()
-    fractions = ocr._extract_fractions("Carta Pokemon Charizard VMAX 020/189 Holo Original")
-    assert len(fractions) > 0
-    assert fractions[0][2] == "020/189"
-
 
 def test_build_cardmarket_url():
     """Tests generating direct Cardmarket redirect URLs."""

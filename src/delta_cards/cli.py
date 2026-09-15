@@ -983,8 +983,8 @@ def run_all(args: argparse.Namespace, config) -> None:
 def run_build_index(args, config) -> None:
     """Builds offline USearch Mmap index from TCGdex SDK."""
     import logging
-    logging.getLogger("delta_cards.recognition.index_builder").setLevel(logging.INFO)
-    from delta_cards.recognition.index_builder import build_index
+    logging.getLogger("delta_cards.recognition.vector_index").setLevel(logging.INFO)
+    from delta_cards.recognition.vector_index import build_index
 
     languages = [args.lang]
     if args.lang.lower() == "all":

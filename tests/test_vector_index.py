@@ -57,38 +57,3 @@ def test_usearch_add_search_and_mmap(tmp_path):
     assert np.isclose(results[0]["similarity"], 1.0, atol=1e-3)
 
 
-def test_multi_language_card_index(tmp_path):
-    from delta_cards.recognition.vector_index import MultiLanguageCardIndex
-
-    # Create an 'es' index and an 'en' index in tmp_path
-    es_idx_path = str(tmp_path / "pokemon_cards_es.usearch")
-    es_meta_path = str(tmp_path / "pokemon_cards_es_meta.sqlite")
-    es_idx = USearchCardIndex(index_path=es_idx_path, meta_path=es_meta_path, lang="es", view_only=False)
-
-    v_es = np.random.randn(384).astype(np.float32)
-    v_es /= np.linalg.norm(v_es)
-    es_idx.add_card(0, v_es, {
-        "tcgdex_id": "sv01-001",
-        "lang": "es",
-        "name": "Sprigatito (ES)",
-        "set_id": "sv01",
-        "set_name": "Escarlata y Púrpura",
-        "local_id": "001",
-    })
-    es_idx.save()
-
-    # Instantiate MultiLanguageCardIndex
-    multi = MultiLanguageCardIndex(base_dir=str(tmp_path), default_lang="es")
-
-    # Search in Spanish
-    res_es, queried_lang = multi.search(v_es, lang="es", top_k=1)
-    assert queried_lang == "es"
-    assert len(res_es) == 1
-    assert res_es[0]["card"]["name"] == "Sprigatito (ES)"
-
-    # Search in French (not yet indexed) -> should gracefully fallback to default_lang ('es')
-    res_fr, queried_fallback = multi.search(v_es, lang="fr", top_k=1)
-    assert queried_fallback == "es"
-    assert len(res_fr) == 1
-    assert res_fr[0]["card"]["name"] == "Sprigatito (ES)"
-
