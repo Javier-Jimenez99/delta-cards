@@ -54,6 +54,39 @@ def test_parse_catalog_html():
     assert item["image_url"] == "https://images1.vinted.net/item.webp"
 
 
+def test_parse_catalog_html_ignores_favourite_count_and_extracts_real_price():
+    """Verify favourite count (e.g. 4 or 1 likes) is NOT parsed as price."""
+    sample_html = """
+    <div class="ItemBox-module" data-testid="product-item-id-99887766">
+      <div class="new-item-box__image-container">
+        <div class="new-item-box__image">
+          <img src="https://images1.vinted.net/charizard.webp"
+               alt="Charizard VMAX, Marca: Pokémon, Estado: Muy bueno, 45.00 €, 48.50 €" />
+        </div>
+        <a href="/items/99887766-charizard-vmax?referrer=catalog" title="Charizard VMAX"></a>
+        <button data-testid="product-item-id-99887766--favourite">
+          <span data-testid="favourite-count-text">4</span>
+        </button>
+      </div>
+      <div class="new-item-box__summary">
+        <p data-testid="product-item-id-99887766--description-title">Pokémon</p>
+        <p data-testid="product-item-id-99887766--price-text">45,00 €</p>
+        <span data-testid="total-combined-price">48,50 €</span>
+      </div>
+    </div>
+    """
+    client = VintedSearchClient()
+    items = client._parse_catalog_html(sample_html)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item["id"] == "99887766"
+    assert item["title"] == "Charizard VMAX"
+    # Must be 45.0, NOT 4.0!
+    assert item["price"] == 45.0
+    assert item["link"] == "https://www.vinted.es/items/99887766-charizard-vmax"
+
+
 def test_db_persistence_vinted_platform():
     """Verify OfferListing with platform='vinted' is persisted correctly in DB."""
     engine = create_engine("sqlite:///:memory:")

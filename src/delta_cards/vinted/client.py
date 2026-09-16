@@ -149,18 +149,24 @@ class VintedSearchClient:
             if not title_text and a_tag and a_tag.get("title"):
                 title_text = a_tag.get("title", "").strip()
 
-            # Extract price
+            # Extract price: direct element selector with robust fallbacks
             price_val: Optional[float] = None
-            for string_val in box.stripped_strings:
-                cleaned = string_val.replace("\xa0", "").replace(" ", "").replace(",", ".")
-                m = re.match(r"^(\d+(?:\.\d+)?)(?:€|EUR)?$", cleaned)
+
+            # 1. Primary: Direct element matching Vinted's price data-testid
+            price_elem = box.find(attrs={"data-testid": re.compile(r"--price-text$")})
+            if not price_elem:
+                price_elem = box.find(attrs={"data-testid": "total-combined-price"})
+
+            if price_elem:
+                cleaned_text = price_elem.get_text().replace("\xa0", " ").replace(",", ".").strip()
+                m = re.search(r"(\d+(?:\.\d+)?)", cleaned_text)
                 if m:
                     try:
                         price_val = float(m.group(1))
-                        break
                     except ValueError:
                         pass
 
+            # 2. Fallback: Image alt attribute (e.g. "..., 15.00 €, 16.45 €")
             if price_val is None and alt_text:
                 price_matches = re.findall(r"(\d+(?:[.,]\d+)?)\s*€", alt_text)
                 if price_matches:
@@ -168,6 +174,19 @@ class VintedSearchClient:
                         price_val = float(price_matches[0].replace(",", "."))
                     except ValueError:
                         pass
+
+            # 3. Fallback: Search strings strictly requiring explicit currency (€ or EUR),
+            # never matching naked numbers (like favourite counters or sizes)
+            if price_val is None:
+                for string_val in box.stripped_strings:
+                    cleaned = string_val.replace("\xa0", "").replace(" ", "").replace(",", ".")
+                    m = re.search(r"(\d+(?:\.\d+)?)(?:€|EUR)", cleaned)
+                    if m:
+                        try:
+                            price_val = float(m.group(1))
+                            break
+                        except ValueError:
+                            pass
 
             if item_id and title_text and price_val is not None:
                 items.append({

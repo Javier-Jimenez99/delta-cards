@@ -31,6 +31,7 @@ dependencies = [
     "onnx>=1.16.0",
     "onnxscript>=0.7.0",
     "streamlit>=1.63.0",
+    "easyocr>=1.7.2",
 ]
 
 [project.scripts]
