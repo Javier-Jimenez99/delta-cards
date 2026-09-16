@@ -4,6 +4,7 @@ from .card_matcher import CardTextMatcher
 from .card_ocr import CardOCR, CardOCRResult
 from .card_ocr_cache import CandidateOCRCache
 from .card_text_service import CardTextService
+from .deterministic_matcher import match_card_by_index_and_name
 from .dinov3_embedder import DINOv3Embedder
 from .llm_verifier import LLMCardVerifier, LLMVerificationResult, get_llm_verifier
 from .pipeline import CardRecognitionPipeline, process_card_listing
@@ -11,6 +12,7 @@ from .vector_index import MultiLanguageCardIndex, USearchCardIndex
 from .visual_detector import CardNotDetectedError, VisualCardDetector, isolate_card
 
 __all__ = [
+    "match_card_by_index_and_name",
     "VisualCardDetector",
     "CardNotDetectedError",
     "isolate_card",
@@ -28,3 +30,4 @@ __all__ = [
     "LLMVerificationResult",
     "get_llm_verifier",
 ]
+

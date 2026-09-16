@@ -14,9 +14,11 @@ from fuzzywuzzy import fuzz
 from .card_matcher import CardTextMatcher
 from .card_ocr import CardOCR, CardOCRResult
 from .card_ocr_cache import CandidateOCRCache
+from .deterministic_matcher import match_card_by_index_and_name
 from .dinov3_embedder import DINOv3Embedder
 from .vector_index import MultiLanguageCardIndex, USearchCardIndex
 from .visual_detector import CardNotDetectedError, VisualCardDetector
+
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +80,82 @@ class CardRecognitionPipeline:
         t_start = time.perf_counter()
         logger.info(f"Starting card recognition for listing: '{title}'")
 
+        # Step 0: Deterministic Fast-Path (Fraction num/denom + Pokémon Name Match)
+        det_match = match_card_by_index_and_name(
+            title=title,
+            description=description,
+            db_conn=getattr(self.vector_index, "_db_conn", None),
+            meta_path=getattr(self.vector_index, "meta_path", None),
+            preferred_lang=self.default_language,
+        )
+        if det_match:
+            winner_lang = det_match.get("lang") or self.default_language
+            verified_card = {
+                "id": det_match.get("tcgdex_id"),
+                "lang": winner_lang,
+                "name": det_match.get("name"),
+                "localId": det_match.get("local_id"),
+                "image": det_match.get("image_url"),
+                "rarity": det_match.get("rarity"),
+                "hp": det_match.get("hp"),
+                "set": {
+                    "id": det_match.get("set_id"),
+                    "name": det_match.get("set_name"),
+                    "cardCount": {"total": det_match.get("total_cards")},
+                },
+            }
+            cm_data = None
+            if det_match.get("cardmarket_id"):
+                cm_data = {
+                    "idProduct": det_match["cardmarket_id"],
+                    "url": f"https://www.cardmarket.com/{winner_lang}/Pokemon/Products/Singles/{det_match.get('set_id')}/{det_match.get('name')}",
+                }
+            else:
+                try:
+                    from ..tcgdex.assigner import fetch_tcgdex_card_pricing
+                    fetched = fetch_tcgdex_card_pricing(verified_card["id"], language=winner_lang)
+                    if fetched:
+                        cm_data = fetched
+                except Exception as err:
+                    logger.debug(f"Could not fetch online pricing for card {verified_card.get('id')}: {err}")
+
+            t_total = time.perf_counter() - t_start
+            logger.info(
+                f"Card Deterministically Recognized: '{verified_card['name']}' ({verified_card['id']} [{winner_lang.upper()}]) "
+                f"in {t_total*1000:.1f}ms"
+            )
+            return {
+                "status": "success",
+                "extraction_method": "deterministic_text_match",
+                "image_url": image_url or (image_source if isinstance(image_source, str) and image_source.startswith("http") else None),
+                "isolation_status": "skipped_deterministic",
+                "card_rectified": False,
+                "ocr_text_snippet": None,
+                "extracted_metadata": {
+                    "card_name": verified_card["name"],
+                    "set_code": det_match.get("set_id"),
+                    "collector_number": det_match.get("local_id"),
+                    "language": winner_lang,
+                },
+                "strategy": "deterministic_match",
+                "card": verified_card,
+                "verified_card": verified_card,
+                "confidence": 1.0,
+                "verification_method": "deterministic_text_match",
+                "cardmarket": cm_data,
+                "debug_trace": {
+                    "strategy": "deterministic_text_match",
+                    "matched_card": verified_card,
+                    "fraction": det_match.get("card_fraction"),
+                },
+                "profiling": {
+                    "total_s": round(t_total, 4),
+                },
+            }
+
         # Step 1: Visual Card Isolation & Perspective Rectification
         card_image = None
+
         annotated_original = None
         isolation_status = "isolated"
         t0 = time.perf_counter()
