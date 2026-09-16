@@ -436,23 +436,23 @@ def _render_scraped_summary_table(
 def check_and_report_deals(engine, args: argparse.Namespace, live_offer_ids: Optional[List[str]] = None) -> None:
     """Queries DB for deals where Wallapop price < TCGDex reference price and prints summary table."""
     try:
-        from .database.models import WallapopOffers, CardmarketPrice
+        from .database.models import PlatformOffers, CardmarketPrice
         from sqlmodel import select, Session, and_, or_
 
         with Session(engine) as s:
             deals_stmt = (
-                select(WallapopOffers, CardmarketPrice)
+                select(PlatformOffers, CardmarketPrice)
                 .join(
                     CardmarketPrice,
                     and_(
-                        WallapopOffers.cardmarket_product_id == CardmarketPrice.cardmarket_product_id,
-                        WallapopOffers.language == CardmarketPrice.language,
+                        PlatformOffers.cardmarket_product_id == CardmarketPrice.cardmarket_product_id,
+                        PlatformOffers.language == CardmarketPrice.language,
                     ),
                 )
                 .where(
                     or_(
-                        and_(CardmarketPrice.avg_price.is_not(None), WallapopOffers.price < CardmarketPrice.avg_price),
-                        and_(CardmarketPrice.avg_price.is_(None), CardmarketPrice.min_price_all.is_not(None), WallapopOffers.price < CardmarketPrice.min_price_all),
+                        and_(CardmarketPrice.avg_price.is_not(None), PlatformOffers.price < CardmarketPrice.avg_price),
+                        and_(CardmarketPrice.avg_price.is_(None), CardmarketPrice.min_price_all.is_not(None), PlatformOffers.price < CardmarketPrice.min_price_all),
                     )
                 )
             )
@@ -514,7 +514,7 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
     db_deals_to_alert = []
     saved_deals_count = 0
     try:
-        from .database.models import CardmarketPrice, WallapopOffers
+        from .database.models import CardmarketPrice, PlatformOffers
         from sqlmodel import select, Session, and_
 
         with Session(engine) as s:
@@ -528,18 +528,18 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
 
             from sqlmodel import or_
             deals_stmt = (
-                select(WallapopOffers, CardmarketPrice)
+                select(PlatformOffers, CardmarketPrice)
                 .join(
                     CardmarketPrice,
                     and_(
-                        WallapopOffers.cardmarket_product_id == CardmarketPrice.cardmarket_product_id,
-                        WallapopOffers.language == CardmarketPrice.language,
+                        PlatformOffers.cardmarket_product_id == CardmarketPrice.cardmarket_product_id,
+                        PlatformOffers.language == CardmarketPrice.language,
                     ),
                 )
                 .where(
                     or_(
-                        and_(CardmarketPrice.avg_price.is_not(None), WallapopOffers.price < CardmarketPrice.avg_price),
-                        and_(CardmarketPrice.avg_price.is_(None), CardmarketPrice.min_price_all.is_not(None), WallapopOffers.price < CardmarketPrice.min_price_all),
+                        and_(CardmarketPrice.avg_price.is_not(None), PlatformOffers.price < CardmarketPrice.avg_price),
+                        and_(CardmarketPrice.avg_price.is_(None), CardmarketPrice.min_price_all.is_not(None), PlatformOffers.price < CardmarketPrice.min_price_all),
                     )
                 )
             )
@@ -584,10 +584,10 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
     except Exception:
         pass
 
-    from .database.models import WallapopOffers
+    from .database.models import PlatformOffers
 
     def _normalize_offer(item: Any) -> OfferListing:
-        if isinstance(item, WallapopOffers):
+        if isinstance(item, PlatformOffers):
             cm_prod_id = item.cardmarket_product_id
             pr = ref_prices.get(cm_prod_id, {}) if cm_prod_id else {}
             avg_p = pr.get("avg") if isinstance(pr, dict) else getattr(item, "_temp_cm_avg_price", None)
@@ -725,11 +725,11 @@ def run_scrape(args: argparse.Namespace, config) -> None:
         db_note = None
         if db_save_enabled:
             if db_saved_total > 0:
-                db_note = f"  • [bold]DATABASE ('WallapopOffers'):[/bold] [green]{db_saved_total} offer(s) saved incrementally to database[/green]"
+                db_note = f"  • [bold]DATABASE ('PlatformOffers'):[/bold] [green]{db_saved_total} offer(s) saved incrementally to database[/green]"
             elif db_error:
-                db_note = f"  • [bold yellow]DATABASE ('WallapopOffers'):[/bold yellow] [dim]Skipped ({db_error})[/dim]"
+                db_note = f"  • [bold yellow]DATABASE ('PlatformOffers'):[/bold yellow] [dim]Skipped ({db_error})[/dim]"
             else:
-                db_note = "  • [bold]DATABASE ('WallapopOffers'):[/bold] [dim]0 new offers to save[/dim]"
+                db_note = "  • [bold]DATABASE ('PlatformOffers'):[/bold] [dim]0 new offers to save[/dim]"
 
         _render_scraped_summary_table(offers, saved_files, db_note=db_note)
 
@@ -745,7 +745,7 @@ def run_assign(args: argparse.Namespace, config) -> None:
     if handle_test_discord(args):
         return
 
-    from .database.models import WallapopOffers
+    from .database.models import PlatformOffers
     from .database import upsert_cardmarket_product, upsert_cardmarket_price
     from sqlmodel import Session, select
     from tqdm import tqdm
@@ -771,8 +771,8 @@ def run_assign(args: argparse.Namespace, config) -> None:
 
     while True:
         with Session(engine) as session:
-            stmt = select(WallapopOffers).where(
-                WallapopOffers.assigned_state == "pending",
+            stmt = select(PlatformOffers).where(
+                PlatformOffers.assigned_state == "pending",
             )
             if getattr(args, "limit", None) is not None:
                 stmt = stmt.limit(args.limit)
@@ -799,7 +799,7 @@ def run_assign(args: argparse.Namespace, config) -> None:
         if non_card_offers:
             with Session(engine) as s:
                 for item in non_card_offers:
-                    db_item = s.exec(select(WallapopOffers).where(WallapopOffers.id == item.id)).first()
+                    db_item = s.exec(select(PlatformOffers).where(PlatformOffers.id == item.id)).first()
                     if db_item:
                         db_item.assigned_state = "not_assigned"
                         if getattr(db_item, "alert_status", None) != "sent":
@@ -830,7 +830,7 @@ def run_assign(args: argparse.Namespace, config) -> None:
             state = "assigned" if has_cm else "not_assigned"
             try:
                 with Session(engine) as s:
-                    db_item = s.exec(select(WallapopOffers).where(WallapopOffers.id == offer.id)).first()
+                    db_item = s.exec(select(PlatformOffers).where(PlatformOffers.id == offer.id)).first()
                     low_p = getattr(offer, "_temp_cm_low_price", None) or getattr(offer, "cardmarket_low_price", None)
                     avg_p = getattr(offer, "_temp_cm_avg_price", None) or getattr(offer, "cardmarket_avg_price", None)
                     trend_p = getattr(offer, "_temp_cm_trend_price", None) or getattr(offer, "cardmarket_trend_price", None)
@@ -887,7 +887,7 @@ def run_assign(args: argparse.Namespace, config) -> None:
         # Reconcile any remaining cards in batch to ensure none stay 'pending'
         with Session(engine) as s:
             for o in unassigned_cards:
-                db_item = s.exec(select(WallapopOffers).where(WallapopOffers.id == o.id)).first()
+                db_item = s.exec(select(PlatformOffers).where(PlatformOffers.id == o.id)).first()
                 if db_item:
                     has_id = bool(getattr(o, "cardmarket_product_id", None) or getattr(o, "tcgdex_id", None))
                     if db_item.assigned_state == "pending":
@@ -970,7 +970,7 @@ def run_all(args: argparse.Namespace, config) -> None:
             already_in_db = set()
             if config.output_settings.save_db and not getattr(args, "no_db", False):
                 try:
-                    from .database.models import WallapopOffers
+                    from .database.models import PlatformOffers
                     from sqlmodel import Session, select
                     eng = get_engine(args.db_url)
                     with Session(eng) as s:
@@ -979,12 +979,12 @@ def run_all(args: argparse.Namespace, config) -> None:
                             chunk = card_ids[i:i + 500]
                             existing = s.exec(
                                 select(
-                                    WallapopOffers.id,
-                                    WallapopOffers.tcgdex_id,
-                                    WallapopOffers.cardmarket_product_id,
-                                    WallapopOffers.language,
+                                    PlatformOffers.id,
+                                    PlatformOffers.tcgdex_id,
+                                    PlatformOffers.cardmarket_product_id,
+                                    PlatformOffers.language,
                                 )
-                                .where(WallapopOffers.id.in_(chunk))
+                                .where(PlatformOffers.id.in_(chunk))
                             ).all()
                             db_lookup = {row[0]: row for row in existing}
                             for o in card_offers:
@@ -1056,9 +1056,9 @@ def run_all(args: argparse.Namespace, config) -> None:
         extra_lines.append(f"  • [bold]TCGDEX / CARDMARKET ENRICHMENT:[/bold] [green]{tcgdex_assigned_count}/{len(card_offers)} card offer(s) identified[/green]")
     db_note = None
     if db_saved_count is not None:
-        db_note = f"  • [bold]DATABASE ('WallapopOffers'):[/bold] [green]{db_saved_count} offer(s) saved/updated[/green]"
+        db_note = f"  • [bold]DATABASE ('PlatformOffers'):[/bold] [green]{db_saved_count} offer(s) saved/updated[/green]"
     elif db_error:
-        db_note = f"  • [bold yellow]DATABASE ('WallapopOffers'):[/bold yellow] [dim]Skipped ({db_error})[/dim]"
+        db_note = f"  • [bold yellow]DATABASE ('PlatformOffers'):[/bold yellow] [dim]Skipped ({db_error})[/dim]"
 
     _render_scraped_summary_table(offers, saved_files, db_note=db_note, extra_lines=extra_lines)
 

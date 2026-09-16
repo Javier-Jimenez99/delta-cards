@@ -4,7 +4,7 @@ import pytest
 from pydantic import BaseModel
 from sqlmodel import SQLModel, create_engine, select, Session
 
-from delta_cards.database.models import WallapopOffers, CardmarketProduct, CardmarketPrice
+from delta_cards.database.models import PlatformOffers, WallapopOffers, CardmarketProduct, CardmarketPrice
 from delta_cards.database.connection import normalize_db_url, init_db
 from delta_cards.database.repository import (
     offer_to_db_model,
@@ -18,9 +18,10 @@ from delta_cards.models import OfferListing
 
 def test_models_inheritance_and_table_names():
     """Verifies that database models inherit from Pydantic BaseModel and SQLModel."""
-    assert issubclass(WallapopOffers, BaseModel)
-    assert issubclass(WallapopOffers, SQLModel)
-    assert WallapopOffers.__tablename__ == "WallapopOffers"
+    assert issubclass(PlatformOffers, BaseModel)
+    assert issubclass(PlatformOffers, SQLModel)
+    assert PlatformOffers.__tablename__ == "PlatformOffers"
+    assert WallapopOffers is PlatformOffers
 
     assert issubclass(CardmarketProduct, BaseModel)
     assert issubclass(CardmarketProduct, SQLModel)

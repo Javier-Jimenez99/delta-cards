@@ -9,15 +9,15 @@ from sqlmodel import Session, select
 
 from ..models import OfferListing
 from .connection import get_engine, get_session, init_db
-from .models import WallapopOffers, CardmarketProduct, CardmarketPrice, CardmarketOffers
+from .models import PlatformOffers, WallapopOffers, CardmarketProduct, CardmarketPrice, CardmarketOffers
 
 logger = logging.getLogger(__name__)
 
 
-def offer_to_db_model(offer: OfferListing, now: Optional[datetime] = None) -> WallapopOffers:
-    """Converts an OfferListing into a WallapopOffers database model instance."""
+def offer_to_db_model(offer: OfferListing, now: Optional[datetime] = None) -> PlatformOffers:
+    """Converts an OfferListing into a PlatformOffers database model instance."""
     now_utc = now or datetime.now(timezone.utc)
-    valid_fields = set(WallapopOffers.model_fields.keys())
+    valid_fields = set(PlatformOffers.model_fields.keys())
     data = {k: v for k, v in offer.model_dump().items() if k in valid_fields}
     data["scraped_at"] = now_utc
     data["updated_at"] = now_utc
@@ -30,7 +30,7 @@ def offer_to_db_model(offer: OfferListing, now: Optional[datetime] = None) -> Wa
             data["assigned_state"] = "pending"
     if not data.get("alert_status"):
         data["alert_status"] = "none"
-    return WallapopOffers(**data)
+    return PlatformOffers(**data)
 
 
 def upsert_cardmarket_product(
@@ -237,7 +237,7 @@ def save_offers_to_db(
     db_url: Optional[str] = None,
     engine: Optional[Engine] = None,
 ) -> int:
-    """Upserts a list of scraped OfferListing objects into the WallapopOffers table.
+    """Upserts a list of scraped OfferListing objects into the PlatformOffers table.
 
     Also ensures associated CardmarketProduct entities are recorded.
 
@@ -288,13 +288,13 @@ def save_offers_to_db(
             from sqlalchemy.dialects.postgresql import insert as pg_insert
 
             records = [offer_to_db_model(o, now=now).model_dump() for o in offers]
-            stmt = pg_insert(WallapopOffers).values(records)
+            stmt = pg_insert(PlatformOffers).values(records)
             stmt = stmt.on_conflict_do_update(
-                index_elements=[WallapopOffers.id],
+                index_elements=[PlatformOffers.id],
                 set_={
                     "title": stmt.excluded.title,
                     "price": stmt.excluded.price,
-                    "platform": func.coalesce(stmt.excluded.platform, WallapopOffers.platform),
+                    "platform": func.coalesce(stmt.excluded.platform, PlatformOffers.platform),
                     "is_reserved": stmt.excluded.is_reserved,
                     "shipping_available": stmt.excluded.shipping_available,
                     "description": stmt.excluded.description,
@@ -302,17 +302,17 @@ def save_offers_to_db(
                     "image_url": stmt.excluded.image_url,
                     "seller_link": stmt.excluded.seller_link,
                     "seller_user_id": stmt.excluded.seller_user_id,
-                    "cardmarket_product_id": func.coalesce(stmt.excluded.cardmarket_product_id, WallapopOffers.cardmarket_product_id),
-                    "language": func.coalesce(stmt.excluded.language, WallapopOffers.language),
-                    "tcgdex_id": func.coalesce(stmt.excluded.tcgdex_id, WallapopOffers.tcgdex_id),
+                    "cardmarket_product_id": func.coalesce(stmt.excluded.cardmarket_product_id, PlatformOffers.cardmarket_product_id),
+                    "language": func.coalesce(stmt.excluded.language, PlatformOffers.language),
+                    "tcgdex_id": func.coalesce(stmt.excluded.tcgdex_id, PlatformOffers.tcgdex_id),
                     "assigned_state": case(
                         (stmt.excluded.assigned_state == "assigned", "assigned"),
-                        (WallapopOffers.assigned_state.is_not(None), WallapopOffers.assigned_state),
+                        (PlatformOffers.assigned_state.is_not(None), PlatformOffers.assigned_state),
                         else_=stmt.excluded.assigned_state,
                     ),
                     "alert_status": case(
                         (stmt.excluded.alert_status.in_(["pending", "sent", "rejected"]), stmt.excluded.alert_status),
-                        (WallapopOffers.alert_status.is_not(None), WallapopOffers.alert_status),
+                        (PlatformOffers.alert_status.is_not(None), PlatformOffers.alert_status),
                         else_=stmt.excluded.alert_status,
                     ),
                     "updated_at": now,
@@ -326,13 +326,13 @@ def save_offers_to_db(
             from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
             records = [offer_to_db_model(o, now=now).model_dump() for o in offers]
-            stmt = sqlite_insert(WallapopOffers).values(records)
+            stmt = sqlite_insert(PlatformOffers).values(records)
             stmt = stmt.on_conflict_do_update(
-                index_elements=[WallapopOffers.id],
+                index_elements=[PlatformOffers.id],
                 set_={
                     "title": stmt.excluded.title,
                     "price": stmt.excluded.price,
-                    "platform": func.coalesce(stmt.excluded.platform, WallapopOffers.platform),
+                    "platform": func.coalesce(stmt.excluded.platform, PlatformOffers.platform),
                     "is_reserved": stmt.excluded.is_reserved,
                     "shipping_available": stmt.excluded.shipping_available,
                     "description": stmt.excluded.description,
@@ -340,17 +340,17 @@ def save_offers_to_db(
                     "image_url": stmt.excluded.image_url,
                     "seller_link": stmt.excluded.seller_link,
                     "seller_user_id": stmt.excluded.seller_user_id,
-                    "cardmarket_product_id": func.coalesce(stmt.excluded.cardmarket_product_id, WallapopOffers.cardmarket_product_id),
-                    "language": func.coalesce(stmt.excluded.language, WallapopOffers.language),
-                    "tcgdex_id": func.coalesce(stmt.excluded.tcgdex_id, WallapopOffers.tcgdex_id),
+                    "cardmarket_product_id": func.coalesce(stmt.excluded.cardmarket_product_id, PlatformOffers.cardmarket_product_id),
+                    "language": func.coalesce(stmt.excluded.language, PlatformOffers.language),
+                    "tcgdex_id": func.coalesce(stmt.excluded.tcgdex_id, PlatformOffers.tcgdex_id),
                     "assigned_state": case(
                         (stmt.excluded.assigned_state == "assigned", "assigned"),
-                        (WallapopOffers.assigned_state.is_not(None), WallapopOffers.assigned_state),
+                        (PlatformOffers.assigned_state.is_not(None), PlatformOffers.assigned_state),
                         else_=stmt.excluded.assigned_state,
                     ),
                     "alert_status": case(
                         (stmt.excluded.alert_status.in_(["pending", "sent", "rejected"]), stmt.excluded.alert_status),
-                        (WallapopOffers.alert_status.is_not(None), WallapopOffers.alert_status),
+                        (PlatformOffers.alert_status.is_not(None), PlatformOffers.alert_status),
                         else_=stmt.excluded.alert_status,
                     ),
                     "updated_at": now,
@@ -363,7 +363,7 @@ def save_offers_to_db(
         else:
             for offer in offers:
                 item = offer_to_db_model(offer, now=now)
-                existing = session.exec(select(WallapopOffers).where(WallapopOffers.id == item.id)).first()
+                existing = session.exec(select(PlatformOffers).where(PlatformOffers.id == item.id)).first()
                 if existing and existing.assigned_state in ("assigned", "not_assigned") and item.assigned_state == "pending":
                     item.assigned_state = existing.assigned_state
                 if existing and existing.alert_status in ("sent", "pending", "rejected") and item.alert_status == "none":
@@ -373,11 +373,11 @@ def save_offers_to_db(
             return len(offers)
 
 
-def get_all_offers(engine: Optional[Engine] = None) -> List[WallapopOffers]:
+def get_all_offers(engine: Optional[Engine] = None) -> List[PlatformOffers]:
     """Retrieves all offers currently stored in the database."""
     eng = engine or get_engine()
     with Session(eng) as session:
-        statement = select(WallapopOffers)
+        statement = select(PlatformOffers)
         results = session.exec(statement).all()
         return list(results)
 
@@ -395,7 +395,7 @@ def update_offer_tcgdex(
     Also ensures CardmarketProduct exists if cardmarket_product_id is provided.
 
     Args:
-        offer_id: ID of the Wallapop offer.
+        offer_id: ID of the marketplace offer.
         tcgdex_id: TCGDex identifier.
         cardmarket_product_id: Cardmarket product ID.
         cardmarket_url: Direct Cardmarket product URL.
@@ -408,7 +408,7 @@ def update_offer_tcgdex(
     eng = engine or get_engine()
     now = datetime.now(timezone.utc)
     with Session(eng) as session:
-        statement = select(WallapopOffers).where(WallapopOffers.id == offer_id)
+        statement = select(PlatformOffers).where(PlatformOffers.id == offer_id)
         offer = session.exec(statement).first()
         if not offer:
             return False
@@ -438,13 +438,13 @@ def update_offer_tcgdex(
 def get_unassigned_card_offers(
     engine: Optional[Engine] = None,
     limit: Optional[int] = None,
-) -> List[WallapopOffers]:
+) -> List[PlatformOffers]:
     """Retrieves card offers (product_type == 'single_card') that do not have a TCGDex ID."""
     eng = engine or get_engine()
     with Session(eng) as session:
-        statement = select(WallapopOffers).where(
-            WallapopOffers.product_type == "single_card",
-            WallapopOffers.tcgdex_id.is_(None),  # type: ignore
+        statement = select(PlatformOffers).where(
+            PlatformOffers.product_type == "single_card",
+            PlatformOffers.tcgdex_id.is_(None),  # type: ignore
         )
         if limit is not None:
             statement = statement.limit(limit)
@@ -455,7 +455,7 @@ def get_unassigned_card_offers(
 def get_pending_alert_offers(
     engine: Optional[Engine] = None,
     limit: Optional[int] = None,
-) -> List[WallapopOffers]:
+) -> List[PlatformOffers]:
     """Retrieves offers with alert_status == 'pending' waiting to be evaluated and dispatched.
 
     Orders them by scraped_at descending (newest offers first).
@@ -463,9 +463,9 @@ def get_pending_alert_offers(
     eng = engine or get_engine()
     with Session(eng) as session:
         statement = (
-            select(WallapopOffers)
-            .where(WallapopOffers.alert_status == "pending")
-            .order_by(WallapopOffers.scraped_at.desc())
+            select(PlatformOffers)
+            .where(PlatformOffers.alert_status == "pending")
+            .order_by(PlatformOffers.scraped_at.desc())
         )
         if limit is not None:
             statement = statement.limit(limit)
@@ -481,7 +481,7 @@ def update_offer_alert_status(
     """Updates the alert_status of an offer.
 
     Args:
-        offer_id: ID of the Wallapop offer.
+        offer_id: ID of the marketplace offer.
         status: New alert status ('none', 'pending', 'sent', 'rejected').
         engine: Optional SQLAlchemy engine.
 
@@ -491,7 +491,7 @@ def update_offer_alert_status(
     eng = engine or get_engine()
     now = datetime.now(timezone.utc)
     with Session(eng) as session:
-        statement = select(WallapopOffers).where(WallapopOffers.id == offer_id)
+        statement = select(PlatformOffers).where(PlatformOffers.id == offer_id)
         offer = session.exec(statement).first()
         if not offer:
             return False

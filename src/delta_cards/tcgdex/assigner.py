@@ -8,7 +8,7 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
 from ..database.connection import get_engine
-from ..database.models import WallapopOffers
+from ..database.models import PlatformOffers
 from ..database.repository import upsert_cardmarket_product, upsert_cardmarket_price
 from ..models import OfferListing, is_card_offer, EXCLUDED_PRODUCT_TYPES, LOT_PATTERNS
 
@@ -274,7 +274,7 @@ def enrich_card_offers_in_db(
     limit: Optional[int] = None,
     max_concurrency: int = 4,
 ) -> int:
-    """Enriches existing card offers stored in the WallapopOffers database table
+    """Enriches existing card offers stored in the PlatformOffers database table
     that currently lack a TCGDex ID using CardRecognitionPipeline with bounded concurrency.
 
     Args:
@@ -292,8 +292,8 @@ def enrich_card_offers_in_db(
         pipeline = CardRecognitionPipeline()
 
     with Session(eng) as session:
-        statement = select(WallapopOffers).where(
-            WallapopOffers.assigned_state == "pending",
+        statement = select(PlatformOffers).where(
+            PlatformOffers.assigned_state == "pending",
         )
         if limit is not None:
             statement = statement.limit(limit)

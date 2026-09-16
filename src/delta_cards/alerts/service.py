@@ -490,7 +490,7 @@ class AlertWorkerService:
            - Executes the LLM Verifier right before sending.
            - If verified: sends Discord alert webhook, marks alert_status = 'sent', and returns.
            - If rejected by LLM: marks alert_status = 'rejected' and advances to the next offer.
-        3. Returns the WallapopOffers model that was alerted, or None if no alert was dispatched.
+        3. Returns the PlatformOffers model that was alerted, or None if no alert was dispatched.
         """
         if not self.settings.discord_alerts_enabled:
             logger.info("Discord alerts are disabled in settings (DISCORD_ALERTS_ENABLED=false).")
@@ -501,25 +501,25 @@ class AlertWorkerService:
             logger.debug("No DISCORD_WEBHOOK_URL configured in settings. Skipping Discord alerts.")
             return None
 
-        from ..database.models import WallapopOffers, CardmarketPrice, CardmarketProduct
+        from ..database.models import PlatformOffers, CardmarketPrice, CardmarketProduct
         from sqlmodel import Session, select, and_
 
         with Session(self.engine) as session:
             stmt = (
-                select(WallapopOffers, CardmarketPrice, CardmarketProduct)
+                select(PlatformOffers, CardmarketPrice, CardmarketProduct)
                 .outerjoin(
                     CardmarketPrice,
                     and_(
-                        WallapopOffers.cardmarket_product_id == CardmarketPrice.cardmarket_product_id,
-                        WallapopOffers.language == CardmarketPrice.language,
+                        PlatformOffers.cardmarket_product_id == CardmarketPrice.cardmarket_product_id,
+                        PlatformOffers.language == CardmarketPrice.language,
                     ),
                 )
                 .outerjoin(
                     CardmarketProduct,
-                    WallapopOffers.cardmarket_product_id == CardmarketProduct.id,
+                    PlatformOffers.cardmarket_product_id == CardmarketProduct.id,
                 )
-                .where(WallapopOffers.alert_status == "pending")
-                .order_by(WallapopOffers.scraped_at.desc())
+                .where(PlatformOffers.alert_status == "pending")
+                .order_by(PlatformOffers.scraped_at.desc())
             )
             pending_candidates = session.exec(stmt).all()
 
@@ -538,7 +538,7 @@ class AlertWorkerService:
             if ref_market_price is None or ref_market_price <= 0:
                 logger.debug(f"Offer {offer.id} missing reference price. Setting alert_status='none'.")
                 with Session(self.engine) as s:
-                    db_o = s.exec(select(WallapopOffers).where(WallapopOffers.id == offer.id)).first()
+                    db_o = s.exec(select(PlatformOffers).where(PlatformOffers.id == offer.id)).first()
                     if db_o:
                         db_o.alert_status = "none"
                         db_o.updated_at = datetime.now(timezone.utc)
@@ -555,7 +555,7 @@ class AlertWorkerService:
             if not cond.is_triggered:
                 logger.debug(f"Offer {offer.id} ('{offer.title[:30]}') does not trigger alert. Setting alert_status='none'.")
                 with Session(self.engine) as s:
-                    db_o = s.exec(select(WallapopOffers).where(WallapopOffers.id == offer.id)).first()
+                    db_o = s.exec(select(PlatformOffers).where(PlatformOffers.id == offer.id)).first()
                     if db_o:
                         db_o.alert_status = "none"
                         db_o.updated_at = datetime.now(timezone.utc)
@@ -617,7 +617,7 @@ class AlertWorkerService:
                             f"{llm_res.verdict_summary}. Marking as 'rejected' and trying next offer."
                         )
                         with Session(self.engine) as s:
-                            db_o = s.exec(select(WallapopOffers).where(WallapopOffers.id == offer.id)).first()
+                            db_o = s.exec(select(PlatformOffers).where(PlatformOffers.id == offer.id)).first()
                             if db_o:
                                 db_o.alert_status = "rejected"
                                 db_o.updated_at = datetime.now(timezone.utc)
@@ -640,7 +640,7 @@ class AlertWorkerService:
 
             if ok:
                 with Session(self.engine) as s:
-                    db_o = s.exec(select(WallapopOffers).where(WallapopOffers.id == offer.id)).first()
+                    db_o = s.exec(select(PlatformOffers).where(PlatformOffers.id == offer.id)).first()
                     if db_o:
                         db_o.alert_status = "sent"
                         db_o.updated_at = datetime.now(timezone.utc)

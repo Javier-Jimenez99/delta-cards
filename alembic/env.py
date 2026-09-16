@@ -8,7 +8,13 @@ from alembic import context
 from sqlmodel import SQLModel
 
 # Import all models to ensure they are registered with SQLModel.metadata
-from delta_cards.database.models import WallapopOffers
+from delta_cards.database.models import (
+    PlatformOffers,
+    WallapopOffers,
+    CardmarketProduct,
+    CardmarketPrice,
+    CardmarketOffers,
+)
 from delta_cards.database.connection import get_db_url
 
 # this is the Alembic Config object, which provides

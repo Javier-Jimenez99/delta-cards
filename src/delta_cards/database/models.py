@@ -31,7 +31,7 @@ class CardmarketProduct(SQLModel, table=True):
 
     # Relationships
     prices: List["CardmarketPrice"] = Relationship(back_populates="product")
-    offers: List["WallapopOffers"] = Relationship(back_populates="cardmarket_product")
+    offers: List["PlatformOffers"] = Relationship(back_populates="cardmarket_product")
     specific_offers: List["CardmarketOffers"] = Relationship(back_populates="product")
 
 
@@ -88,20 +88,20 @@ class CardmarketPrice(SQLModel, table=True):
 
     # Relationships
     product: Optional[CardmarketProduct] = Relationship(back_populates="prices")
-    offers: List["WallapopOffers"] = Relationship(
+    offers: List["PlatformOffers"] = Relationship(
         sa_relationship_kwargs={
-            "primaryjoin": "and_(CardmarketPrice.cardmarket_product_id == foreign(WallapopOffers.cardmarket_product_id), CardmarketPrice.language == foreign(WallapopOffers.language))",
+            "primaryjoin": "and_(CardmarketPrice.cardmarket_product_id == foreign(PlatformOffers.cardmarket_product_id), CardmarketPrice.language == foreign(PlatformOffers.language))",
             "viewonly": True,
         }
     )
 
 
-class WallapopOffers(SQLModel, table=True):
-    """PostgreSQL table model storing scraped Wallapop offer listings."""
+class PlatformOffers(SQLModel, table=True):
+    """Database table model storing scraped marketplace offer listings."""
 
-    __tablename__ = "WallapopOffers"
+    __tablename__ = "PlatformOffers"
 
-    id: str = Field(primary_key=True, index=True, description="Wallapop unique item ID")
+    id: str = Field(primary_key=True, index=True, description="Marketplace unique item ID")
     title: str = Field(index=True, description="Title of the listing")
     price: float = Field(index=True, description="Price in currency units")
     currency: str = Field(default="EUR", description="Currency code (e.g. EUR)")
@@ -159,10 +159,14 @@ class WallapopOffers(SQLModel, table=True):
     cardmarket_product: Optional[CardmarketProduct] = Relationship(back_populates="offers")
     cardmarket_price: Optional[CardmarketPrice] = Relationship(
         sa_relationship_kwargs={
-            "primaryjoin": "and_(foreign(WallapopOffers.cardmarket_product_id) == CardmarketPrice.cardmarket_product_id, foreign(WallapopOffers.language) == CardmarketPrice.language)",
+            "primaryjoin": "and_(foreign(PlatformOffers.cardmarket_product_id) == CardmarketPrice.cardmarket_product_id, foreign(PlatformOffers.language) == CardmarketPrice.language)",
             "viewonly": True,
         }
     )
+
+
+# Alias for backward compatibility
+WallapopOffers = PlatformOffers
 
 
 class CardmarketOffers(SQLModel, table=True):

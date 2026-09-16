@@ -1,6 +1,6 @@
 """Database package for delta-cards."""
 
-from .models import WallapopOffers, CardmarketProduct, CardmarketPrice, CardmarketOffers
+from .models import PlatformOffers, WallapopOffers, CardmarketProduct, CardmarketPrice, CardmarketOffers
 from .connection import get_db_url, get_engine, get_session, init_db
 from .repository import (
     save_offers_to_db,
@@ -15,6 +15,7 @@ from .repository import (
 )
 
 __all__ = [
+    "PlatformOffers",
     "WallapopOffers",
     "CardmarketProduct",
     "CardmarketPrice",

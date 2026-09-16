@@ -69,35 +69,53 @@ logger = logging.getLogger(__name__)
 def init_db(engine: Optional[Engine] = None) -> None:
     """Initializes database schema directly by creating all tables defined in SQLModel metadata.
 
-    Also automatically verifies and adds any newly introduced columns (e.g. alert_status)
-    to existing tables if they are missing from an already-created database.
+    Also automatically verifies table migrations (e.g. WallapopOffers -> PlatformOffers)
+    and newly introduced columns to existing tables if missing.
     """
     eng = engine or get_engine()
+
+    try:
+        insp = inspect(eng)
+        table_names = insp.get_table_names()
+        if "WallapopOffers" in table_names and "PlatformOffers" not in table_names:
+            logger.info("Migrating table 'WallapopOffers' to 'PlatformOffers'...")
+            with eng.begin() as conn:
+                conn.execute(text('ALTER TABLE "WallapopOffers" RENAME TO "PlatformOffers"'))
+                # Ensure indexes exist on PlatformOffers
+                for col in ["id", "title", "price", "product_type", "seller_user_id", "search_profile_id", "cardmarket_product_id", "language", "tcgdex_id", "assigned_state", "alert_status", "platform"]:
+                    try:
+                        conn.execute(text(f'CREATE INDEX IF NOT EXISTS "ix_PlatformOffers_{col}" ON "PlatformOffers" ({col})'))
+                    except Exception:
+                        pass
+    except Exception as exc:
+        logger.warning(f"Could not check/migrate WallapopOffers table to PlatformOffers: {exc}")
+
     SQLModel.metadata.create_all(eng)
 
     try:
         insp = inspect(eng)
         table_names = insp.get_table_names()
-        if "WallapopOffers" in table_names:
-            existing_cols = {c["name"] for c in insp.get_columns("WallapopOffers")}
+        target_table = "PlatformOffers" if "PlatformOffers" in table_names else ("WallapopOffers" if "WallapopOffers" in table_names else None)
+        if target_table:
+            existing_cols = {c["name"] for c in insp.get_columns(target_table)}
             with eng.begin() as conn:
                 if "platform" not in existing_cols:
-                    conn.execute(text('ALTER TABLE "WallapopOffers" ADD COLUMN platform VARCHAR DEFAULT \'wallapop\''))
-                    conn.execute(text('UPDATE "WallapopOffers" SET platform = \'wallapop\' WHERE platform IS NULL OR platform = \'\''))
+                    conn.execute(text(f'ALTER TABLE "{target_table}" ADD COLUMN platform VARCHAR DEFAULT \'wallapop\''))
+                    conn.execute(text(f'UPDATE "{target_table}" SET platform = \'wallapop\' WHERE platform IS NULL OR platform = \'\''))
                     try:
-                        conn.execute(text('CREATE INDEX IF NOT EXISTS ix_WallapopOffers_platform ON "WallapopOffers" (platform)'))
+                        conn.execute(text(f'CREATE INDEX IF NOT EXISTS ix_{target_table}_platform ON "{target_table}" (platform)'))
                     except Exception:
                         pass
                 if "alert_status" not in existing_cols:
-                    conn.execute(text('ALTER TABLE "WallapopOffers" ADD COLUMN alert_status VARCHAR DEFAULT \'none\''))
+                    conn.execute(text(f'ALTER TABLE "{target_table}" ADD COLUMN alert_status VARCHAR DEFAULT \'none\''))
                     try:
-                        conn.execute(text('CREATE INDEX IF NOT EXISTS ix_WallapopOffers_alert_status ON "WallapopOffers" (alert_status)'))
+                        conn.execute(text(f'CREATE INDEX IF NOT EXISTS ix_{target_table}_alert_status ON "{target_table}" (alert_status)'))
                     except Exception:
                         pass
                 if "assigned_state" not in existing_cols:
-                    conn.execute(text('ALTER TABLE "WallapopOffers" ADD COLUMN assigned_state VARCHAR DEFAULT \'pending\''))
+                    conn.execute(text(f'ALTER TABLE "{target_table}" ADD COLUMN assigned_state VARCHAR DEFAULT \'pending\''))
                     try:
-                        conn.execute(text('CREATE INDEX IF NOT EXISTS ix_WallapopOffers_assigned_state ON "WallapopOffers" (assigned_state)'))
+                        conn.execute(text(f'CREATE INDEX IF NOT EXISTS ix_{target_table}_assigned_state ON "{target_table}" (assigned_state)'))
                     except Exception:
                         pass
 
