@@ -33,8 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
         "-c",
         "--config",
         type=str,
-        default="config/pokemon_cards_search.json",
-        help="Path to JSON configuration file (default: config/pokemon_cards_search.json)",
+        default="config/magic_cards_search.json",
+        help="Path to JSON configuration file (default: config/magic_cards_search.json)",
     )
     common_parser.add_argument(
         "-v",
@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser = argparse.ArgumentParser(
-        description="Delta Cards: Pokemon card market scraper & Cardmarket deal detector.",
+        description="Delta Cards: Magic & Pokemon card market scraper & Cardmarket deal detector.",
         parents=[common_parser],
     )
 
@@ -284,18 +284,18 @@ def handle_test_discord(args: argparse.Namespace) -> bool:
 
     settings = get_settings()
     if getattr(args, "discord_webhook", None):
-        settings = settings.model_copy(update={"discord_webhook_url": args.discord_webhook})
+        settings = settings.model_copy(update={"discord_webhook_url": args.discord_webhook, "magic_cards_webhook": args.discord_webhook, "pokemon_cards_webhook": args.discord_webhook})
 
-    webhook_url = settings.discord_webhook_url
+    webhook_url = settings.magic_cards_webhook or settings.discord_webhook_url or settings.pokemon_cards_webhook
     if not webhook_url:
         err_console.print(
-            "[bold red]Error:[/] No DISCORD_WEBHOOK_URL found in .env or passed via --discord-webhook.\n"
-            "Please configure DISCORD_WEBHOOK_URL in your .env file or pass --discord-webhook <url>."
+            "[bold red]Error:[/] No MAGIC_CARDS_WEBHOOK or POKEMON_CARDS_WEBHOOK found in .env or passed via --discord-webhook.\n"
+            "Please configure MAGIC_CARDS_WEBHOOK in your .env file or pass --discord-webhook <url>."
         )
         sys.exit(1)
 
     target_name = "Vinted" if is_vinted else "Wallapop"
-    console.print(f"[bold cyan]Testing Discord Alert Webhook ({target_name})...[/bold cyan]")
+    console.print(f"[bold cyan]Testing Discord Alert Webhook ({target_name} - Magic: The Gathering)...[/bold cyan]")
     masked = webhook_url[:35] + "..." if len(webhook_url) > 35 else webhook_url
     console.print(f"  • Webhook URL: [cyan]{masked}[/cyan]")
     console.print(f"  • Platform: [yellow]{target_name}[/yellow]")
@@ -306,37 +306,39 @@ def handle_test_discord(args: argparse.Namespace) -> bool:
     if is_vinted:
         test_offer = OfferListing(
             id="vinted_test_deal_alert",
-            title="Charizard Base Set Holo 4/102 (Test Alert Vinted)",
-            price=45.0,
+            title="The One Ring Foil Borderless 0269 (Test Alert Vinted)",
+            price=35.0,
             product_type="single_card",
             platform="vinted",
             location="Madrid, Spain",
-            link="https://www.vinted.es/items/10011923266-charizard-base-set",
-            image_url="https://images.pokemontcg.io/base1/4_hires.png",
-            cardmarket_url="https://www.cardmarket.com/en/Pokemon/Products/Singles/Base-Set/Charizard",
-            cardmarket_low_price=120.0,
-            cardmarket_avg_price=140.0,
-            cardmarket_price_spain=140.0,
-            cardmarket_price_all=140.0,
+            link="https://www.vinted.es/items/10011923266-the-one-ring",
+            image_url="https://cards.scryfall.io/normal/front/d/5/d580260c-0bbb-4ff6-87ff-063d397f35c7.jpg",
+            cardmarket_url="https://www.cardmarket.com/en/Magic/Products/Singles/The-Lord-of-the-Rings-Tales-of-Middle-earth/The-One-Ring",
+            cardmarket_low_price=95.0,
+            cardmarket_avg_price=110.0,
+            cardmarket_price_spain=110.0,
+            cardmarket_price_all=110.0,
+            search_profile_id="single_card",
         )
     else:
         test_offer = OfferListing(
             id="test_deal_alert",
-            title="Charizard Base Set Holo 4/102 (Test Alert Wallapop)",
-            price=45.0,
+            title="Sheoldred, the Apocalypse Foil (Test Alert Wallapop)",
+            price=25.0,
             product_type="single_card",
             platform="wallapop",
             location="Madrid, Spain",
-            link="https://es.wallapop.com",
-            image_url="https://images.pokemontcg.io/base1/4_hires.png",
-            cardmarket_url="https://www.cardmarket.com/en/Pokemon/Products/Singles/Base-Set/Charizard",
-            cardmarket_low_price=120.0,
-            cardmarket_avg_price=140.0,
-            cardmarket_price_spain=140.0,
-            cardmarket_price_all=140.0,
+            link="https://es.wallapop.com/item/sheoldred-the-apocalypse-1002345",
+            image_url="https://cards.scryfall.io/normal/front/d/6/d67be074-cdd4-41d9-ac89-0a0456c4e4b2.jpg",
+            cardmarket_url="https://www.cardmarket.com/en/Magic/Products/Singles/Dominaria-United/Sheoldred-the-Apocalypse",
+            cardmarket_low_price=70.0,
+            cardmarket_avg_price=82.0,
+            cardmarket_price_spain=82.0,
+            cardmarket_price_all=82.0,
+            search_profile_id="single_card",
         )
 
-    service = DiscordAlertService(settings=settings)
+    service = DiscordAlertService(settings=settings, webhook_url=webhook_url)
     sent_count = service.process_and_alert_offers([test_offer])
     if sent_count > 0:
         console.print(f"[bold green]✓ Test Discord alert for {target_name} sent successfully! Check your Discord channel.[/bold green]")
@@ -508,7 +510,7 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
 
     app_settings = get_settings()
     if getattr(args, "discord_webhook", None):
-        app_settings = app_settings.model_copy(update={"discord_webhook_url": args.discord_webhook})
+        app_settings = app_settings.model_copy(update={"discord_webhook_url": args.discord_webhook, "magic_cards_webhook": args.discord_webhook, "pokemon_cards_webhook": args.discord_webhook})
 
     ref_prices = {}
     db_deals_to_alert = []
@@ -837,10 +839,12 @@ def run_assign(args: argparse.Namespace, config) -> None:
 
                     if getattr(offer, "cardmarket_product_id", None):
                         cm_id = offer.cardmarket_product_id
+                        is_magic_item = "magic" in getattr(config, "name", "").lower() or (getattr(offer, "title", None) and any(k in offer.title.lower() for k in ("magic", "mtg")))
+                        game_path = "Magic" if is_magic_item else "Pokemon"
                         cm_url = (
                             getattr(offer, "_temp_cm_url", None)
                             or getattr(offer, "cardmarket_url", None)
-                            or f"https://www.cardmarket.com/{offer.language or 'es'}/Pokemon/Products?idProduct={cm_id}"
+                            or f"https://www.cardmarket.com/{offer.language or 'es'}/{game_path}/Products?idProduct={cm_id}"
                         )
                         upsert_cardmarket_product(product_id=cm_id, cardmarket_url=cm_url, session=s)
                         if low_p is not None or avg_p is not None or trend_p is not None:
@@ -878,9 +882,14 @@ def run_assign(args: argparse.Namespace, config) -> None:
             pbar.set_description(f"Assigning cards ({matched_count[0]}/{len(unassigned_cards)} matched)")
             pbar.update(1)
 
+        is_magic_config = "magic" in getattr(config, "name", "").lower() or any("magic" in getattr(p, "name", "").lower() for p in getattr(config, "search_profiles", []))
         prev_level = logging.getLogger().level
         logging.getLogger().setLevel(logging.ERROR)
-        assign_tcgdex_to_offers(unassigned_cards, progress_callback=on_progress, max_concurrency=4)
+        if is_magic_config:
+            from .scryfall import assign_scryfall_to_offers
+            assign_scryfall_to_offers(unassigned_cards, progress_callback=on_progress)
+        else:
+            assign_tcgdex_to_offers(unassigned_cards, progress_callback=on_progress, max_concurrency=4)
         logging.getLogger().setLevel(prev_level)
         pbar.close()
 
@@ -928,10 +937,16 @@ def run_all(args: argparse.Namespace, config) -> None:
     )
 
     if getattr(args, "assign_existing_cards", False):
-        console.print("[bold cyan]Enriching unassigned card offers in database with TCGDex & Cardmarket IDs...[/bold cyan]")
+        is_magic = "magic" in getattr(config, "name", "").lower() or any("magic" in getattr(p, "name", "").lower() for p in getattr(config, "search_profiles", []))
+        catalog_name = "Scryfall" if is_magic else "TCGDex"
+        console.print(f"[bold cyan]Enriching unassigned card offers in database with {catalog_name} & Cardmarket IDs...[/bold cyan]")
         try:
             engine = get_engine(args.db_url)
-            count = enrich_card_offers_in_db(engine=engine)
+            if is_magic:
+                from .scryfall import enrich_magic_offers_in_db
+                count = enrich_magic_offers_in_db(engine=engine)
+            else:
+                count = enrich_card_offers_in_db(engine=engine)
             console.print(f"[bold green]✓ Successfully matched and updated {count} card offer(s) in the database.[/bold green]")
         except Exception as exc:
             err_console.print(f"[bold red]Error updating database offers:[/] {exc}")
@@ -1031,9 +1046,14 @@ def run_all(args: argparse.Namespace, config) -> None:
                         except Exception:
                             pass
 
+                is_magic = "magic" in getattr(config, "name", "").lower() or any("magic" in getattr(p, "name", "").lower() for p in getattr(config, "search_profiles", []))
                 prev_level = logging.getLogger().level
                 logging.getLogger().setLevel(logging.ERROR)
-                assign_tcgdex_to_offers(new_card_offers, progress_callback=assignment_progress, max_concurrency=4)
+                if is_magic:
+                    from .scryfall import assign_scryfall_to_offers
+                    assign_scryfall_to_offers(new_card_offers, progress_callback=assignment_progress)
+                else:
+                    assign_tcgdex_to_offers(new_card_offers, progress_callback=assignment_progress, max_concurrency=4)
                 logging.getLogger().setLevel(prev_level)
                 pbar.close()
 
@@ -1163,7 +1183,7 @@ def run_alerts(args: argparse.Namespace, config) -> None:
 
     app_settings = get_settings()
     if getattr(args, "discord_webhook", None):
-        app_settings = app_settings.model_copy(update={"discord_webhook_url": args.discord_webhook})
+        app_settings = app_settings.model_copy(update={"discord_webhook_url": args.discord_webhook, "magic_cards_webhook": args.discord_webhook, "pokemon_cards_webhook": args.discord_webhook})
     if getattr(args, "no_discord", False):
         app_settings = app_settings.model_copy(update={"discord_alerts_enabled": False})
 
@@ -1173,12 +1193,14 @@ def run_alerts(args: argparse.Namespace, config) -> None:
 
     is_once = bool(getattr(args, "once", False))
 
+    active_webhook = app_settings.magic_cards_webhook or app_settings.discord_webhook_url or app_settings.pokemon_cards_webhook
     console.print(
         Panel.fit(
             f"[bold cyan]Delta Cards Alert Worker[/bold cyan]\n"
             f"[dim]Decoupled Periodic Alert Dispatcher & LLM Verifier[/dim]\n"
             f"[yellow]Database:[/] {engine.url}\n"
             f"[yellow]Discord Enabled:[/] {app_settings.discord_alerts_enabled}\n"
+            f"[yellow]Active Webhook:[/] {active_webhook[:35] + '...' if active_webhook and len(active_webhook) > 35 else active_webhook}\n"
             f"[yellow]Interval:[/] {interval}s ({round(interval / 60, 1)} min)\n"
             f"[yellow]Worker Mode:[/] {'Single run (--once)' if is_once else 'Continuous Loop'}",
             title="🔔 Delta Cards Alert Worker",

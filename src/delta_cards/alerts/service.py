@@ -149,6 +149,25 @@ def format_product_type(product_type: Optional[str]) -> str:
     return mapping.get(pt, pt.replace("_", " ").title())
 
 
+def is_magic_offer(offer: Any) -> bool:
+    """Returns True if the offer corresponds to Magic: The Gathering."""
+    if not offer:
+        return False
+    if getattr(offer, "game", None) == "magic":
+        return True
+    sp = str(getattr(offer, "search_profile_id", "") or "").lower()
+    title = str(getattr(offer, "title", "") or "").lower()
+    desc = str(getattr(offer, "description", "") or "").lower()
+    cm_url = str(getattr(offer, "cardmarket_url", "") or "").lower()
+    if "/magic/" in cm_url:
+        return True
+    if "magic" in sp or "mtg" in sp:
+        return True
+    if any(k in title for k in ("magic", "mtg", "scryfall")) or any(k in desc for k in ("magic the gathering", "mtg")):
+        return True
+    return False
+
+
 def build_discord_embed(
     offer: OfferListing,
     result: AlertConditionResult,
@@ -181,7 +200,8 @@ def build_discord_embed(
     # Resolve Cardmarket URL (either explicitly set or built from product ID)
     cardmarket_url = offer.cardmarket_url
     if not cardmarket_url and offer.cardmarket_product_id:
-        cardmarket_url = f"https://www.cardmarket.com/es/Pokemon/Products?idProduct={offer.cardmarket_product_id}"
+        game_category = "Magic" if is_magic_offer(offer) else "Pokemon"
+        cardmarket_url = f"https://www.cardmarket.com/es/{game_category}/Products?idProduct={offer.cardmarket_product_id}"
 
     # Average market price ("Precio medio") from TCGDex
     avg_price = getattr(offer, "cardmarket_avg_price", None)
@@ -272,6 +292,7 @@ def build_discord_embed(
 
 
 DEFAULT_OFFER_ALERT_MESSAGE: str = "<:pokeball_light:1548052080357412995> ¡Ha aparecido una oferta salvaje!"
+DEFAULT_MAGIC_OFFER_ALERT_MESSAGE: str = "🔮 ¡Ha aparecido una oferta salvaje de Magic!"
 
 
 def send_discord_webhook(
@@ -342,9 +363,15 @@ def send_discord_webhook(
 class DiscordAlertService:
     """Coordinates evaluating offers and dispatching Discord notifications."""
 
-    def __init__(self, settings: Optional[Settings] = None, verifier: Optional[Any] = None):
+    def __init__(
+        self,
+        settings: Optional[Settings] = None,
+        verifier: Optional[Any] = None,
+        webhook_url: Optional[str] = None,
+    ):
         self.settings = settings or get_settings()
         self.verifier = verifier
+        self.webhook_url = webhook_url
 
     def process_and_alert_offers(
         self,
@@ -365,10 +392,19 @@ class DiscordAlertService:
             logger.info("Discord alerts are disabled in settings (DISCORD_ALERTS_ENABLED=false).")
             return 0
 
-        webhook_url = self.settings.discord_webhook_url
+        first_offer = offers[0] if offers else None
+        is_magic = is_magic_offer(first_offer) if first_offer else False
+
+        webhook_url = self.webhook_url
+        if not webhook_url:
+            if is_magic:
+                webhook_url = self.settings.magic_cards_webhook or self.settings.discord_webhook_url or self.settings.pokemon_cards_webhook
+            else:
+                webhook_url = self.settings.pokemon_cards_webhook or self.settings.discord_webhook_url or self.settings.magic_cards_webhook
+
         if not webhook_url:
             logger.debug(
-                "No DISCORD_WEBHOOK_URL configured in settings. Skipping Discord alerts."
+                "No MAGIC_CARDS_WEBHOOK or POKEMON_CARDS_WEBHOOK configured in settings. Skipping Discord alerts."
             )
             return 0
 
@@ -456,8 +492,17 @@ class DiscordAlertService:
             return 0
 
         logger.info(f"Dispatching {len(matching_embeds)} Discord alert(s)...")
+        first_offer = offers[0] if offers else None
+        is_magic = is_magic_offer(first_offer) if first_offer else False
         emoji = (self.settings.alert_wild_offer_emoji or "").strip()
-        offer_msg = f"{emoji} ¡Ha aparecido una oferta salvaje!" if emoji else DEFAULT_OFFER_ALERT_MESSAGE
+        if is_magic:
+            if not emoji or emoji == "<:pokeball_light:1548052080357412995>":
+                offer_msg = DEFAULT_MAGIC_OFFER_ALERT_MESSAGE
+            else:
+                offer_msg = f"{emoji} ¡Ha aparecido una oferta salvaje de Magic!"
+        else:
+            offer_msg = f"{emoji} ¡Ha aparecido una oferta salvaje!" if emoji else DEFAULT_OFFER_ALERT_MESSAGE
+
         ok = send_discord_webhook(
             webhook_url=webhook_url,
             embeds=matching_embeds,
@@ -475,11 +520,13 @@ class AlertWorkerService:
         engine: Optional[Any] = None,
         settings: Optional[Settings] = None,
         verifier: Optional[Any] = None,
+        webhook_url: Optional[str] = None,
     ):
         from ..database.connection import get_engine
         self.engine = engine or get_engine()
         self.settings = settings or get_settings()
         self.verifier = verifier
+        self.webhook_url = webhook_url
 
     def dispatch_one_pending_alert(self) -> Optional[Any]:
         """Finds and evaluates pending offers one by one until 1 is verified and sent to Discord.
@@ -494,11 +541,6 @@ class AlertWorkerService:
         """
         if not self.settings.discord_alerts_enabled:
             logger.info("Discord alerts are disabled in settings (DISCORD_ALERTS_ENABLED=false).")
-            return None
-
-        webhook_url = self.settings.discord_webhook_url
-        if not webhook_url:
-            logger.debug("No DISCORD_WEBHOOK_URL configured in settings. Skipping Discord alerts.")
             return None
 
         from ..database.models import PlatformOffers, CardmarketPrice, CardmarketProduct
@@ -564,9 +606,10 @@ class AlertWorkerService:
                 continue
 
             # Convert to OfferListing for embed and LLM verification
+            game_category = "Magic" if is_magic_offer(offer) else "Pokemon"
             cm_url = (
                 product_row.cardmarket_url if product_row
-                else (f"https://www.cardmarket.com/{offer.language or 'es'}/Pokemon/Products?idProduct={offer.cardmarket_product_id}" if offer.cardmarket_product_id else None)
+                else (f"https://www.cardmarket.com/{offer.language or 'es'}/{game_category}/Products?idProduct={offer.cardmarket_product_id}" if offer.cardmarket_product_id else None)
             )
             offer_listing = OfferListing(
                 id=offer.id,
@@ -629,8 +672,27 @@ class AlertWorkerService:
 
             # Construct Discord Embed and Dispatch
             embed = build_discord_embed(offer_listing, cond, llm_verification=llm_res)
+            is_magic = is_magic_offer(offer_listing)
             emoji = (self.settings.alert_wild_offer_emoji or "").strip()
-            offer_msg = f"{emoji} ¡Ha aparecido una oferta salvaje!" if emoji else DEFAULT_OFFER_ALERT_MESSAGE
+            if is_magic:
+                if not emoji or emoji == "<:pokeball_light:1548052080357412995>":
+                    offer_msg = DEFAULT_MAGIC_OFFER_ALERT_MESSAGE
+                else:
+                    offer_msg = f"{emoji} ¡Ha aparecido una oferta salvaje de Magic!"
+            else:
+                offer_msg = f"{emoji} ¡Ha aparecido una oferta salvaje!" if emoji else DEFAULT_OFFER_ALERT_MESSAGE
+
+            webhook_url = self.webhook_url
+            if not webhook_url:
+                if is_magic:
+                    webhook_url = self.settings.magic_cards_webhook or self.settings.discord_webhook_url or self.settings.pokemon_cards_webhook
+                else:
+                    webhook_url = self.settings.pokemon_cards_webhook or self.settings.discord_webhook_url or self.settings.magic_cards_webhook
+
+            if not webhook_url:
+                logger.debug("No MAGIC_CARDS_WEBHOOK or POKEMON_CARDS_WEBHOOK configured. Skipping Discord alert.")
+                return None
+
             ok = send_discord_webhook(
                 webhook_url=webhook_url,
                 embeds=[embed],
