@@ -45,6 +45,20 @@ uv run python scripts/setup.py
   - **Debian / Ubuntu**: `sudo apt-get install -y tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng`
   - **macOS**: `brew install tesseract tesseract-lang`
 
+### ⚡ Quick Commands (`just`)
+A [`Justfile`](Justfile) is provided to easily manage services and workflows:
+```bash
+just                  # List all available commands
+just restart          # Restart all background systemd services (assigner, alerts, scraper timer)
+just status           # Inspect status of all services
+just logs             # Tail live logs from all running workers
+just scrape-all       # Run a scrape cycle on both Wallapop and Vinted
+just assign-once      # Run AI card recognition and pricing on pending batch
+just app              # Launch Streamlit evaluation & diagnostic UI
+just test             # Run test suite
+```
+
+
 ---
 
 ## ⚙️ Configuration (`config/pokemon_cards_search.json`)
@@ -256,6 +270,16 @@ For automated, persistent 24/7 background execution with auto-restart on crashes
 
 ### Managing Systemd Services
 
+With `just`:
+```bash
+just restart          # Restart all services (assigner, alerts, scraper timer)
+just status           # Check status of all services
+just logs             # Live combined logs (or: just logs-assign, just logs-alerts, just logs-scrape)
+just stop             # Stop all services
+just start            # Start all services
+```
+
+Or using native `systemctl` / `journalctl`:
 - **Check status:**
   ```bash
   sudo systemctl status delta-cards-scrape.timer
@@ -277,9 +301,9 @@ For automated, persistent 24/7 background execution with auto-restart on crashes
   sudo systemctl stop delta-cards-alerts.service
   ```
 
-- **Restart a service:**
+- **Restart services:**
   ```bash
-  sudo systemctl restart delta-cards-assign.service
+  sudo systemctl restart delta-cards-assign.service delta-cards-alerts.service delta-cards-scrape.timer
   ```
 
 ## 🐍 Python Library Usage
