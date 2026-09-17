@@ -42,3 +42,4 @@ data/
 # Logs and runtime files
 *.log
 *.deb
+notebooks/
