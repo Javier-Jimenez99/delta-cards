@@ -11,125 +11,126 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 # The 20 Structured Verification Questions: (id, text_en, text_es, is_hard_veto)
+# Questions are purely in English for optimal LLM reasoning and instruction adherence.
 VERIFICATION_QUESTIONS: List[Tuple[str, str, str, bool]] = [
     (
         "q01_pokemon_name_match",
         "Pokemon name in photo OCR matches TCGdex candidate name",
-        "¿El nombre del Pokémon en la foto coincide con el de TCGdex?",
+        "",
         True,
     ),
     (
         "q02_stage_evolution_match",
         "Stage or evolution (Basic, Stage 1, Stage 2, V, VMAX, ex) matches",
-        "¿La fase de evolución (Básico, Fase 1, Fase 2, VMAX, etc.) coincide?",
+        "",
         False,
     ),
     (
         "q03_hp_alignment",
         "HP value in photo OCR matches or aligns with official card",
-        "¿Los puntos de vida (HP) de la foto coinciden o son compatibles?",
+        "",
         False,
     ),
     (
         "q04_pokemon_type_consistent",
         "Card element or energy type is consistent",
-        "¿El tipo elemental del Pokémon es compatible?",
+        "",
         False,
     ),
     (
         "q05_collector_number_match",
         "Local collector number (e.g. 75, 025) matches",
-        "¿El número local de coleccionista (ej. 75, 025) coincide?",
+        "",
         False,
     ),
     (
         "q06_total_card_count_match",
         "Set total card count (e.g. /108, /198) matches",
-        "¿El total del set (ej. /108, /198) coincide?",
+        "",
         False,
     ),
     (
         "q07_promo_code_alignment",
         "Promo code aligns or not applicable",
-        "¿Si es promo, coincide el código promo (o no aplica)?",
+        "",
         False,
     ),
     (
         "q08_set_expansion_consistent",
         "Set name or expansion abbreviation matches or aligns",
-        "¿El nombre o abreviatura del set concuerda con la expansión?",
+        "",
         False,
     ),
     (
         "q09_primary_attack_name",
         "Primary attack name appears in photo OCR",
-        "¿El nombre del ataque principal aparece en la foto?",
+        "",
         False,
     ),
     (
         "q10_attack_damage_match",
         "Primary attack damage number matches",
-        "¿El valor de daño del ataque coincide?",
+        "",
         False,
     ),
     (
         "q11_secondary_attack_or_ability",
         "Secondary attack or special ability appears in photo OCR",
-        "¿El segundo ataque o habilidad aparece en la foto?",
+        "",
         False,
     ),
     (
         "q12_energy_rules_or_retreat",
         "Card rules (e.g. Pokemon V Rule) or retreat cost consistent",
-        "¿Las reglas de la carta o coste de retirada concuerdan?",
+        "",
         False,
     ),
     (
         "q13_ocr_text_subset_valid",
         "Photo OCR text is a plausible subset of official scan OCR",
-        "¿El texto de la foto física es un subconjunto plausible del scan oficial?",
+        "",
         False,
     ),
     (
         "q14_card_mechanic_badge",
         "Special mechanics (EX, GX, V, VMAX, Tera, Radiant) match",
-        "¿Las mecánicas especiales (EX, GX, V, VMAX, Tera) coinciden?",
+        "",
         False,
     ),
     (
         "q15_rarity_visual_indicator",
         "Card rarity indicator is consistent with listing and card",
-        "¿La rareza de la carta es coherente con la foto y datos?",
+        "",
         False,
     ),
     (
         "q16_no_contradictory_pokemon",
         "No conflicting or contradictory Pokemon name appears in photo",
-        "¿Está ausente cualquier otro nombre de Pokémon contradictorio?",
+        "",
         False,
     ),
     (
         "q17_wallapop_title_mentions_card",
         "Wallapop listing title references this card or its collector number",
-        "¿El título en Wallapop hace referencia al Pokémon o número?",
+        "",
         False,
     ),
     (
         "q18_wallapop_description_consistent",
         "Wallapop description is consistent with the card and does not describe another item",
-        "¿La descripción en Wallapop concuerda con la carta?",
+        "",
         False,
     ),
     (
         "q19_single_card_not_bulk_lot",
         "Listing is for a single individual card (not a bulk lot, tin, or empty box)",
-        "¿La oferta es de una única carta individual (no lote masivo ni caja vacía)?",
+        "",
         False,
     ),
     (
         "q20_overall_verdict_genuine_match",
         "Overall verdict: this is confirmed beyond doubt to be a genuine match",
-        "¿Veredicto global: se confirma que es un match genuino sin margen de duda?",
+        "",
         True,
     ),
 ]
@@ -240,12 +241,12 @@ def compute_factual_checks(
             q02 = (stage in q_full) or (stage in w_full) or (stage in c_full)
             break
 
-    # 3. HP alignment
+    # 3. HP alignment: verified if HP is found and matches
     q03 = True
     if t_hp and q_hp:
         q03 = (t_hp == q_hp) or (t_hp in q_full)
     elif t_hp:
-        q03 = (t_hp in q_full) or (t_hp in w_full) or not q_full
+        q03 = (t_hp in q_full) or (t_hp in w_full)
 
     # 4. Type consistent
     q04 = True
@@ -262,10 +263,10 @@ def compute_factual_checks(
             or any(t_local_id in f or num_clean in f for f in q_fracs)
         )
 
-    # 6. Total cards match
+    # 6. Total cards match: confirmed if evidenced
     q06 = True
     if t_total:
-        q06 = (t_total in q_full) or (t_total in w_full) or any(t_total in f for f in q_fracs) or not q_full
+        q06 = bool(t_total in q_full or t_total in w_full or any(t_total in f for f in q_fracs))
 
     # 7. Promo code
     q07 = True
@@ -279,26 +280,28 @@ def compute_factual_checks(
     if clean_set_name and (clean_set_name in clean_w_full or clean_set_name in clean_q_full):
         q08 = True
     else:
-        # Check if known distinct sets are mentioned in listing but differ from candidate set
+        # Check if known distinct vintage sets are mentioned in listing but differ from candidate set
         known_vintage_sets = ["jungle", "fossil", "aquapolis", "base set 2", "neo genesis", "neo discovery"]
         mentioned_sets = [s for s in known_vintage_sets if s in w_full and s not in t_name]
         if mentioned_sets:
             q08 = any(s in t_set_name for s in mentioned_sets)
 
-    # 9. Primary attack name
+    # 9. Primary attack name: confirmed if primary attack appears in OCR or listing
     q09 = True
     if t_attacks:
         att0 = re.sub(r"[^a-z0-9]", "", t_attacks[0])
-        q09 = (att0 in clean_q_full) or (att0 in clean_w_full) or not clean_q_full
+        if att0 and len(att0) >= 3:
+            q09 = bool((att0 in clean_q_full) or (att0 in clean_w_full))
 
     # 10. Attack damage
     q10 = True
 
-    # 11. Secondary attack or ability
+    # 11. Secondary attack or ability: confirmed if 2nd attack appears
     q11 = True
     if len(t_attacks) > 1:
         att1 = re.sub(r"[^a-z0-9]", "", t_attacks[1])
-        q11 = (att1 in clean_q_full) or (att1 in clean_w_full) or not clean_q_full
+        if att1 and len(att1) >= 3:
+            q11 = bool((att1 in clean_q_full) or (att1 in clean_w_full))
 
     # 12. Energy rules / retreat
     q12 = True
@@ -331,7 +334,7 @@ def compute_factual_checks(
     is_lot = any(w in w_full for w in ["lote ", "pack de ", "caja vacia", "caja vacía", "tin vacia"])
     q19 = not is_lot if ptype in ("single_card", "card", "carta", "") else True
 
-    # 20. Overall verdict: requires name, number, set, no contradictory pokemon, and single card
+    # 20. Overall verdict: requires name, number, set consistency, no contradictory pokemon, and single card
     q20 = bool(q01 and q05 and q08 and q16 and q19)
 
     return {
@@ -548,9 +551,14 @@ Output strictly the 20 answers as comma-separated digits (0 or 1), in exact orde
                 try:
                     from .vector_index import MultiLanguageCardIndex
                     vindex = MultiLanguageCardIndex(view_only=True)
-                    tcgdex_card = vindex.get_card_by_id_and_lang(
-                        offer.tcgdex_id, getattr(offer, "language", "es") or "es"
-                    ) or {}
+                    # Prefer English card representation for English LLM prompts
+                    tcgdex_card = (
+                        vindex.get_card_by_id_and_lang(offer.tcgdex_id, "en")
+                        or vindex.get_card_by_id_and_lang(
+                            offer.tcgdex_id, getattr(offer, "language", "es") or "es"
+                        )
+                        or {}
+                    )
                 except Exception as e:
                     logger.debug(f"Could not load tcgdex card: {e}")
 
@@ -635,10 +643,10 @@ Output strictly the 20 answers as comma-separated digits (0 or 1), in exact orde
             fact_ok = factual_checks.get(qid, True)
             if has_valid_llm:
                 llm_ok = bool(int_answers[idx] == 1)
-                if is_veto:
-                    is_confirmed = fact_ok and llm_ok
-                else:
-                    is_confirmed = fact_ok or llm_ok
+                # Both factual heuristics and LLM evaluation must agree
+                # If deterministic factual check fails, it cannot be confirmed.
+                # If LLM rejects the question (llm_ok=False), it is not confirmed.
+                is_confirmed = fact_ok and llm_ok
             else:
                 is_confirmed = fact_ok
 
