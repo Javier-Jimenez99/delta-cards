@@ -37,7 +37,7 @@ def test_default_settings():
 def test_settings_from_environment(monkeypatch):
     """Verify settings correctly load from environment variables."""
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:pass@localhost:5432/testdb")
-    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/123/abc")
+    monkeypatch.setenv("POKEMON_CARDS_WEBHOOK", "https://discord.com/api/webhooks/123/abc")
     monkeypatch.setenv("DISCORD_ALERTS_ENABLED", "false")
     monkeypatch.setenv("ALERT_MIN_SAVING_PERCENTAGE", "25.5")
     monkeypatch.setenv("ALERT_MIN_SAVING_ABSOLUTE", "15.0")
@@ -56,6 +56,23 @@ def test_settings_from_environment(monkeypatch):
     assert settings.alert_condition_operator == "and"
     assert settings.time_between_offers == 3.5
     assert settings.debug is True
+
+
+def test_pokemon_and_magic_webhooks(monkeypatch):
+    """Verify separate POKEMON_CARDS_WEBHOOK and MAGIC_CARDS_WEBHOOK configuration."""
+    poke_url = "https://discord.com/api/webhooks/poke/123"
+    magic_url = "https://discord.com/api/webhooks/magic/456"
+    monkeypatch.setenv("POKEMON_CARDS_WEBHOOK", poke_url)
+    monkeypatch.setenv("MAGIC_CARDS_WEBHOOK", magic_url)
+
+    get_settings.cache_clear()
+    settings = Settings(_env_file=None)
+
+    assert settings.pokemon_cards_webhook == poke_url
+    assert settings.magic_cards_webhook == magic_url
+    assert settings.get_webhook_url("magic") == magic_url
+    assert settings.get_webhook_url("pokemon") == poke_url
+
 
 
 def test_settings_load_from_env_file(tmp_path):

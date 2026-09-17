@@ -40,6 +40,17 @@ else
     exit 1
 fi
 
+# Check & Install just task runner if missing
+if ! command -v just &>/dev/null; then
+    echo -e "${YELLOW}just task runner not found. Installing casey/just automatically...${RESET}"
+    curl -LsSf https://just.systems/install.sh | bash -s -- --to "$HOME/.local/bin"
+fi
+
+if command -v just &>/dev/null; then
+    JUST_VERSION=$(just --version)
+    echo -e "   ✓ ${GREEN}just is installed:${RESET} ${JUST_VERSION}"
+fi
+
 # 2. Check Tesseract OCR
 echo -e "\n${BOLD}[2/5] Checking Tesseract OCR engine...${RESET}"
 if command -v tesseract &>/dev/null; then
@@ -66,7 +77,7 @@ uv run python scripts/setup.py
 
 # 5. Quick Sanity Verification
 echo -e "\n${BOLD}[5/5] Running quick test suite sanity check...${RESET}"
-uv run pytest tests/test_recognition.py -k test_detect_card_language -q
+uv run pytest tests/test_card_ocr.py -k test_card_ocr_language_detection -q
 
 echo -e "\n${BOLD}${GREEN}==============================================================================${RESET}"
 echo -e "${BOLD}${GREEN} 🎉 ALL DONE! Delta Cards is fully installed and ready to use.${RESET}"

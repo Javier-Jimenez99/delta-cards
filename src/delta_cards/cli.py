@@ -33,8 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
         "-c",
         "--config",
         type=str,
-        default="config/pokemon_cards_search.json",
-        help="Path to JSON configuration file (default: config/pokemon_cards_search.json)",
+        default="config",
+        help="Path to JSON configuration file or directory containing configs (default: 'config')",
     )
     common_parser.add_argument(
         "-v",
@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser = argparse.ArgumentParser(
-        description="Delta Cards: Pokemon card market scraper & Cardmarket deal detector.",
+        description="Delta Cards: Magic & Pokemon card market scraper & Cardmarket deal detector.",
         parents=[common_parser],
     )
 
@@ -222,51 +222,68 @@ def setup_logging(verbose: bool) -> None:
             logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-def load_and_filter_config(args: argparse.Namespace):
-    """Loads configuration file and applies CLI overrides and profile filters."""
-    config_path = Path(args.config)
-    if not config_path.is_file():
+def load_and_filter_configs(args: argparse.Namespace) -> List[Any]:
+    """Loads configuration file(s) from a file or directory and applies CLI overrides and profile filters."""
+    from .config_loader import load_all_configs, load_config
+
+    config_arg = getattr(args, "config", None) or "config"
+    config_path = Path(config_arg)
+    if not config_path.exists():
         project_root = Path(__file__).resolve().parent.parent.parent
-        alt_path = project_root / args.config
-        if alt_path.is_file():
+        alt_path = project_root / config_arg
+        if alt_path.exists():
             config_path = alt_path
         else:
-            err_console.print(f"[bold red]Error:[/] Configuration file not found at '{args.config}'")
+            err_console.print(f"[bold red]Error:[/] Configuration path not found at '{config_arg}'")
             sys.exit(1)
 
-    try:
-        config = load_config(config_path)
-    except Exception as exc:
-        err_console.print(f"[bold red]Error loading config:[/] {exc}")
+    if config_path.is_dir():
+        raw_configs = load_all_configs(config_path)
+    else:
+        try:
+            raw_configs = [load_config(config_path)]
+        except Exception as exc:
+            err_console.print(f"[bold red]Error loading config:[/] {exc}")
+            sys.exit(1)
+
+    filtered_configs = []
+    for cfg in raw_configs:
+        # Filter enabled profiles
+        cfg.search_profiles = [p for p in cfg.search_profiles if getattr(p, "enabled", True)]
+
+        # Filter by profile IDs if requested
+        if getattr(args, "profile", None):
+            selected_profiles = set(args.profile)
+            cfg.search_profiles = [p for p in cfg.search_profiles if p.id in selected_profiles]
+
+        # Filter by product types if requested
+        if getattr(args, "type", None):
+            selected_types = set(args.type)
+            cfg.search_profiles = [p for p in cfg.search_profiles if p.product_type in selected_types]
+
+        # Apply overrides
+        if getattr(args, "output", None):
+            cfg.output_settings.output_dir = args.output
+        if getattr(args, "limit", None) is not None:
+            for profile in cfg.search_profiles:
+                profile.max_items = args.limit
+
+        if cfg.search_profiles:
+            filtered_configs.append(cfg)
+
+    if not filtered_configs:
+        err_console.print("[bold red]Error:[/] No matching profiles found across loaded configuration(s).")
         sys.exit(1)
 
-    # Filter enabled profiles
-    config.search_profiles = [p for p in config.search_profiles if getattr(p, "enabled", True)]
+    return filtered_configs
 
-    # Filter by profile IDs if requested
-    if getattr(args, "profile", None):
-        selected_profiles = set(args.profile)
-        config.search_profiles = [p for p in config.search_profiles if p.id in selected_profiles]
-        if not config.search_profiles:
-            err_console.print(f"[bold red]Error:[/] No profiles found matching: {', '.join(args.profile)}")
-            sys.exit(1)
 
-    # Filter by product types if requested
-    if getattr(args, "type", None):
-        selected_types = set(args.type)
-        config.search_profiles = [p for p in config.search_profiles if p.product_type in selected_types]
-        if not config.search_profiles:
-            err_console.print(f"[bold red]Error:[/] No profiles found matching product type(s): {', '.join(args.type)}")
-            sys.exit(1)
-
-    # Apply overrides
-    if getattr(args, "output", None):
-        config.output_settings.output_dir = args.output
-    if getattr(args, "limit", None) is not None:
-        for profile in config.search_profiles:
-            profile.max_items = args.limit
-
-    return config
+def load_and_filter_config(args: argparse.Namespace):
+    """Loads configuration (returns list of SearchConfig if multiple, or single SearchConfig if only 1)."""
+    configs = load_and_filter_configs(args)
+    if len(configs) == 1:
+        return configs[0]
+    return configs
 
 
 def handle_test_discord(args: argparse.Namespace) -> bool:
@@ -284,18 +301,18 @@ def handle_test_discord(args: argparse.Namespace) -> bool:
 
     settings = get_settings()
     if getattr(args, "discord_webhook", None):
-        settings = settings.model_copy(update={"discord_webhook_url": args.discord_webhook})
+        settings = settings.model_copy(update={"discord_webhook_url": args.discord_webhook, "magic_cards_webhook": args.discord_webhook, "pokemon_cards_webhook": args.discord_webhook})
 
-    webhook_url = settings.discord_webhook_url
+    webhook_url = settings.magic_cards_webhook or settings.discord_webhook_url or settings.pokemon_cards_webhook
     if not webhook_url:
         err_console.print(
-            "[bold red]Error:[/] No DISCORD_WEBHOOK_URL found in .env or passed via --discord-webhook.\n"
-            "Please configure DISCORD_WEBHOOK_URL in your .env file or pass --discord-webhook <url>."
+            "[bold red]Error:[/] No MAGIC_CARDS_WEBHOOK or POKEMON_CARDS_WEBHOOK found in .env or passed via --discord-webhook.\n"
+            "Please configure MAGIC_CARDS_WEBHOOK in your .env file or pass --discord-webhook <url>."
         )
         sys.exit(1)
 
     target_name = "Vinted" if is_vinted else "Wallapop"
-    console.print(f"[bold cyan]Testing Discord Alert Webhook ({target_name})...[/bold cyan]")
+    console.print(f"[bold cyan]Testing Discord Alert Webhook ({target_name} - Magic: The Gathering)...[/bold cyan]")
     masked = webhook_url[:35] + "..." if len(webhook_url) > 35 else webhook_url
     console.print(f"  • Webhook URL: [cyan]{masked}[/cyan]")
     console.print(f"  • Platform: [yellow]{target_name}[/yellow]")
@@ -306,37 +323,39 @@ def handle_test_discord(args: argparse.Namespace) -> bool:
     if is_vinted:
         test_offer = OfferListing(
             id="vinted_test_deal_alert",
-            title="Charizard Base Set Holo 4/102 (Test Alert Vinted)",
-            price=45.0,
+            title="The One Ring Foil Borderless 0269 (Test Alert Vinted)",
+            price=35.0,
             product_type="single_card",
             platform="vinted",
             location="Madrid, Spain",
-            link="https://www.vinted.es/items/10011923266-charizard-base-set",
-            image_url="https://images.pokemontcg.io/base1/4_hires.png",
-            cardmarket_url="https://www.cardmarket.com/en/Pokemon/Products/Singles/Base-Set/Charizard",
-            cardmarket_low_price=120.0,
-            cardmarket_avg_price=140.0,
-            cardmarket_price_spain=140.0,
-            cardmarket_price_all=140.0,
+            link="https://www.vinted.es/items/10011923266-the-one-ring",
+            image_url="https://cards.scryfall.io/normal/front/d/5/d580260c-0bbb-4ff6-87ff-063d397f35c7.jpg",
+            cardmarket_url="https://www.cardmarket.com/en/Magic/Products/Singles/The-Lord-of-the-Rings-Tales-of-Middle-earth/The-One-Ring",
+            cardmarket_low_price=95.0,
+            cardmarket_avg_price=110.0,
+            cardmarket_price_spain=110.0,
+            cardmarket_price_all=110.0,
+            search_profile_id="single_card",
         )
     else:
         test_offer = OfferListing(
             id="test_deal_alert",
-            title="Charizard Base Set Holo 4/102 (Test Alert Wallapop)",
-            price=45.0,
+            title="Sheoldred, the Apocalypse Foil (Test Alert Wallapop)",
+            price=25.0,
             product_type="single_card",
             platform="wallapop",
             location="Madrid, Spain",
-            link="https://es.wallapop.com",
-            image_url="https://images.pokemontcg.io/base1/4_hires.png",
-            cardmarket_url="https://www.cardmarket.com/en/Pokemon/Products/Singles/Base-Set/Charizard",
-            cardmarket_low_price=120.0,
-            cardmarket_avg_price=140.0,
-            cardmarket_price_spain=140.0,
-            cardmarket_price_all=140.0,
+            link="https://es.wallapop.com/item/sheoldred-the-apocalypse-1002345",
+            image_url="https://cards.scryfall.io/normal/front/d/6/d67be074-cdd4-41d9-ac89-0a0456c4e4b2.jpg",
+            cardmarket_url="https://www.cardmarket.com/en/Magic/Products/Singles/Dominaria-United/Sheoldred-the-Apocalypse",
+            cardmarket_low_price=70.0,
+            cardmarket_avg_price=82.0,
+            cardmarket_price_spain=82.0,
+            cardmarket_price_all=82.0,
+            search_profile_id="single_card",
         )
 
-    service = DiscordAlertService(settings=settings)
+    service = DiscordAlertService(settings=settings, webhook_url=webhook_url)
     sent_count = service.process_and_alert_offers([test_offer])
     if sent_count > 0:
         console.print(f"[bold green]✓ Test Discord alert for {target_name} sent successfully! Check your Discord channel.[/bold green]")
@@ -508,7 +527,7 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
 
     app_settings = get_settings()
     if getattr(args, "discord_webhook", None):
-        app_settings = app_settings.model_copy(update={"discord_webhook_url": args.discord_webhook})
+        app_settings = app_settings.model_copy(update={"discord_webhook_url": args.discord_webhook, "magic_cards_webhook": args.discord_webhook, "pokemon_cards_webhook": args.discord_webhook})
 
     ref_prices = {}
     db_deals_to_alert = []
@@ -550,13 +569,18 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
             include_saved = app_settings.debug or getattr(args, "alert_all_deals", False)
             if include_saved:
                 from .models import OfferListing
+                from .alerts import is_magic_offer
                 for off, pr in all_deals:
+                    off_game = (getattr(off, "game", None) or ("magic" if is_magic_offer(off) else "pokemon")).lower()
+                    game_cat = "Magic" if off_game == "magic" else "Pokemon"
                     deal_item = OfferListing(
                         id=off.id,
                         title=off.title,
                         price=off.price,
                         currency=off.currency,
                         product_type=off.product_type,
+                        platform=getattr(off, "platform", "wallapop") or "wallapop",
+                        game=off_game,
                         location=off.location,
                         country=off.country,
                         description=off.description,
@@ -570,7 +594,7 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
                         search_profile_id=off.search_profile_id,
                         cardmarket_product_id=off.cardmarket_product_id,
                         cardmarket_url=(
-                            f"https://www.cardmarket.com/es/Pokemon/Products?idProduct={off.cardmarket_product_id}"
+                            f"https://www.cardmarket.com/es/{game_cat}/Products?idProduct={off.cardmarket_product_id}"
                             if off.cardmarket_product_id
                             else None
                         ),
@@ -585,6 +609,7 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
         pass
 
     from .database.models import PlatformOffers
+    from .alerts import is_magic_offer
 
     def _normalize_offer(item: Any) -> OfferListing:
         if isinstance(item, PlatformOffers):
@@ -592,6 +617,8 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
             pr = ref_prices.get(cm_prod_id, {}) if cm_prod_id else {}
             avg_p = pr.get("avg") if isinstance(pr, dict) else getattr(item, "_temp_cm_avg_price", None)
             low_p = pr.get("low") or pr.get("all") if isinstance(pr, dict) else getattr(item, "_temp_cm_low_price", None)
+            item_game = (getattr(item, "game", None) or ("magic" if is_magic_offer(item) else "pokemon")).lower()
+            game_cat = "Magic" if item_game == "magic" else "Pokemon"
             return OfferListing(
                 id=item.id,
                 title=item.title,
@@ -612,7 +639,7 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
                 cardmarket_product_id=cm_prod_id,
                 cardmarket_url=(
                     getattr(item, "_temp_cm_url", None)
-                    or (f"https://www.cardmarket.com/es/Pokemon/Products?idProduct={cm_prod_id}" if cm_prod_id else None)
+                    or (f"https://www.cardmarket.com/es/{game_cat}/Products?idProduct={cm_prod_id}" if cm_prod_id else None)
                 ),
                 language=item.language,
                 cardmarket_low_price=low_p,
@@ -620,6 +647,7 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
                 cardmarket_price_all=avg_p or low_p,
                 tcgdex_id=item.tcgdex_id,
                 platform=getattr(item, "platform", "wallapop") or "wallapop",
+                game=item_game,
                 assigned_state=item.assigned_state or "pending",
             )
         return item
@@ -639,6 +667,7 @@ def dispatch_discord_alerts(engine, args: argparse.Namespace, offers: Optional[l
 
 def run_scrape(args: argparse.Namespace, config) -> None:
     """Scrapes offers (Wallapop, Vinted, or all) and saves them to DB incrementally without running card recognition."""
+    configs = config if isinstance(config, list) else [config]
     target_platform = getattr(args, "platform", "wallapop") or "wallapop"
     scrape_wallapop = target_platform in ("wallapop", "all")
     scrape_vinted = target_platform in ("vinted", "all")
@@ -648,90 +677,94 @@ def run_scrape(args: argparse.Namespace, config) -> None:
         else ("Vinted" if target_platform == "vinted" else "Wallapop")
     )
 
-    wallapop_scraper = CardOffersScraper(config) if scrape_wallapop else None
-    vinted_scraper = None
-    if scrape_vinted:
-        from .vinted import VintedScraper
-        vinted_scraper = VintedScraper(config)
+    names = ", ".join(c.name for c in configs)
+    total_profiles = sum(len(c.search_profiles) for c in configs)
 
     console.print(
         Panel.fit(
-            f"[bold cyan]{config.name}[/bold cyan]\n"
-            f"[dim]{config.description or ''}[/dim]\n"
+            f"[bold cyan]Delta Cards Multi-Scraper[/bold cyan]\n"
+            f"[dim]Configs:[/] {names}\n"
             f"[yellow]Platform:[/] {platform_desc}\n"
-            f"[yellow]Profiles:[/] {len(config.search_profiles)} configured\n"
-            f"[yellow]Output Dir:[/] {config.output_settings.output_dir}\n"
+            f"[yellow]Profiles:[/] {total_profiles} profile(s) across {len(configs)} configuration(s)\n"
             f"[yellow]Loop Mode:[/] {'Enabled (' + str(getattr(args, 'interval', 300)) + 's interval)' if getattr(args, 'loop', False) else 'Single run'}",
             title=f"🃏 Delta Cards Scraper ({platform_desc})",
             border_style="cyan",
         )
     )
 
-    db_save_enabled = config.output_settings.save_db and not getattr(args, "no_db", False)
-    if db_save_enabled:
-        init_db(get_engine(getattr(args, "db_url", None)))
-
     while True:
-        db_saved_total = 0
-        db_error = None
+        for current_cfg in configs:
+            console.print(f"\n[bold yellow]▶ Scraping: {current_cfg.name} (Game: {getattr(current_cfg, 'game', 'pokemon').upper()})[/bold yellow]")
+            wallapop_scraper = CardOffersScraper(current_cfg) if scrape_wallapop else None
+            vinted_scraper = None
+            if scrape_vinted:
+                from .vinted import VintedScraper
+                vinted_scraper = VintedScraper(current_cfg)
 
-        def handle_scraped_batch(batch: List[OfferListing]) -> None:
-            nonlocal db_saved_total, db_error
-            if db_save_enabled and batch:
+            db_save_enabled = current_cfg.output_settings.save_db and not getattr(args, "no_db", False)
+            if db_save_enabled:
+                init_db(get_engine(getattr(args, "db_url", None)))
+
+            db_saved_total = 0
+            db_error = None
+
+            def handle_scraped_batch(batch: List[OfferListing]) -> None:
+                nonlocal db_saved_total, db_error
+                if db_save_enabled and batch:
+                    try:
+                        saved = save_offers_to_db(batch, db_url=getattr(args, "db_url", None))
+                        db_saved_total += saved
+                    except Exception as exc:
+                        db_error = str(exc)
+                        logger.warning(f"Error saving batch to DB: {exc}")
+
+            offers: List[OfferListing] = []
+            saved_files: Dict[str, Any] = {}
+
+            if wallapop_scraper:
                 try:
-                    saved = save_offers_to_db(batch, db_url=getattr(args, "db_url", None))
-                    db_saved_total += saved
+                    with console.status(f"[bold cyan]Starting Wallapop scraper ({current_cfg.name})...[/bold cyan]", spinner="dots") as status:
+                        progress_cb = _create_scraper_progress_callback(status, db_save_enabled)
+                        w_offers = asyncio.run(
+                            wallapop_scraper.run(
+                                progress_callback=progress_cb,
+                                on_batch=handle_scraped_batch,
+                            )
+                        )
+                        status.update("[bold cyan]Saving Wallapop scraped data to files...[/bold cyan]")
+                        saved_files.update(wallapop_scraper.save_results(w_offers))
+                        offers.extend(w_offers)
                 except Exception as exc:
-                    db_error = str(exc)
-                    logger.warning(f"Error saving batch to DB: {exc}")
+                    logger.error(f"Error during Wallapop scraping ({current_cfg.name}): {exc}", exc_info=True)
+                    console.print(f"[bold red]Wallapop scraper error:[/] {exc}")
 
-        offers: List[OfferListing] = []
-        saved_files: Dict[str, Any] = {}
-
-        if wallapop_scraper:
-            try:
-                with console.status("[bold cyan]Starting Wallapop scraper...[/bold cyan]", spinner="dots") as status:
-                    progress_cb = _create_scraper_progress_callback(status, db_save_enabled)
-                    w_offers = asyncio.run(
-                        wallapop_scraper.run(
-                            progress_callback=progress_cb,
-                            on_batch=handle_scraped_batch,
+            if vinted_scraper:
+                try:
+                    with console.status(f"[bold cyan]Starting Vinted scraper ({current_cfg.name})...[/bold cyan]", spinner="dots") as status:
+                        progress_cb = _create_scraper_progress_callback(status, db_save_enabled)
+                        v_offers = asyncio.run(
+                            vinted_scraper.run(
+                                progress_callback=progress_cb,
+                                on_batch=handle_scraped_batch,
+                            )
                         )
-                    )
-                    status.update("[bold cyan]Saving Wallapop scraped data to files...[/bold cyan]")
-                    saved_files.update(wallapop_scraper.save_results(w_offers))
-                    offers.extend(w_offers)
-            except Exception as exc:
-                logger.error(f"Error during Wallapop scraping: {exc}", exc_info=True)
-                console.print(f"[bold red]Wallapop scraper error:[/] {exc}")
+                        status.update("[bold cyan]Saving Vinted scraped data to files...[/bold cyan]")
+                        saved_files.update(vinted_scraper.save_results(v_offers))
+                        offers.extend(v_offers)
+                except Exception as exc:
+                    logger.error(f"Error during Vinted scraping ({current_cfg.name}): {exc}", exc_info=True)
+                    console.print(f"[bold red]Vinted scraper error:[/] {exc}")
 
-        if vinted_scraper:
-            try:
-                with console.status("[bold cyan]Starting Vinted scraper...[/bold cyan]", spinner="dots") as status:
-                    progress_cb = _create_scraper_progress_callback(status, db_save_enabled)
-                    v_offers = asyncio.run(
-                        vinted_scraper.run(
-                            progress_callback=progress_cb,
-                            on_batch=handle_scraped_batch,
-                        )
-                    )
-                    status.update("[bold cyan]Saving Vinted scraped data to files...[/bold cyan]")
-                    saved_files.update(vinted_scraper.save_results(v_offers))
-                    offers.extend(v_offers)
-            except Exception as exc:
-                logger.error(f"Error during Vinted scraping: {exc}", exc_info=True)
-                console.print(f"[bold red]Vinted scraper error:[/] {exc}")
+            db_note = None
+            if db_save_enabled:
+                if db_saved_total > 0:
+                    db_note = f"  • [bold]DATABASE ('PlatformOffers'):[/bold] [green]{db_saved_total} offer(s) saved incrementally to database[/green]"
+                elif db_error:
+                    db_note = f"  • [bold yellow]DATABASE ('PlatformOffers'):[/bold yellow] [dim]Skipped ({db_error})[/dim]"
+                else:
+                    db_note = "  • [bold]DATABASE ('PlatformOffers'):[/bold] [dim]0 new offers to save[/dim]"
 
-        db_note = None
-        if db_save_enabled:
-            if db_saved_total > 0:
-                db_note = f"  • [bold]DATABASE ('PlatformOffers'):[/bold] [green]{db_saved_total} offer(s) saved incrementally to database[/green]"
-            elif db_error:
-                db_note = f"  • [bold yellow]DATABASE ('PlatformOffers'):[/bold yellow] [dim]Skipped ({db_error})[/dim]"
-            else:
-                db_note = "  • [bold]DATABASE ('PlatformOffers'):[/bold] [dim]0 new offers to save[/dim]"
-
-        _render_scraped_summary_table(offers, saved_files, db_note=db_note)
+            _render_scraped_summary_table(offers, saved_files, db_note=db_note)
 
         if not getattr(args, "loop", False):
             break
@@ -837,10 +870,12 @@ def run_assign(args: argparse.Namespace, config) -> None:
 
                     if getattr(offer, "cardmarket_product_id", None):
                         cm_id = offer.cardmarket_product_id
+                        offer_game = (getattr(offer, "game", None) or ("magic" if is_magic_offer(offer) else "pokemon")).lower()
+                        game_path = "Magic" if offer_game == "magic" else "Pokemon"
                         cm_url = (
                             getattr(offer, "_temp_cm_url", None)
                             or getattr(offer, "cardmarket_url", None)
-                            or f"https://www.cardmarket.com/{offer.language or 'es'}/Pokemon/Products?idProduct={cm_id}"
+                            or f"https://www.cardmarket.com/{offer.language or 'es'}/{game_path}/Products?idProduct={cm_id}"
                         )
                         upsert_cardmarket_product(product_id=cm_id, cardmarket_url=cm_url, session=s)
                         if low_p is not None or avg_p is not None or trend_p is not None:
@@ -878,15 +913,37 @@ def run_assign(args: argparse.Namespace, config) -> None:
             pbar.set_description(f"Assigning cards ({matched_count[0]}/{len(unassigned_cards)} matched)")
             pbar.update(1)
 
+        pokemon_cards = []
+        magic_cards = []
+        unsupported_cards = []
+        for r in unassigned_cards:
+            offer_game = (getattr(r, "game", None) or ("magic" if is_magic_offer(r) else "pokemon")).lower()
+            if offer_game == "magic":
+                magic_cards.append(r)
+            elif offer_game == "pokemon":
+                pokemon_cards.append(r)
+            else:
+                unsupported_cards.append(r)
+
+        if unsupported_cards:
+            logger.info(f"Skipping {len(unsupported_cards)} offer(s) with no matching card assignment pipeline.")
+
         prev_level = logging.getLogger().level
         logging.getLogger().setLevel(logging.ERROR)
-        assign_tcgdex_to_offers(unassigned_cards, progress_callback=on_progress, max_concurrency=4)
-        logging.getLogger().setLevel(prev_level)
-        pbar.close()
+        try:
+            if magic_cards:
+                from .scryfall import assign_scryfall_to_offers
+                assign_scryfall_to_offers(magic_cards, progress_callback=on_progress)
+            if pokemon_cards:
+                assign_tcgdex_to_offers(pokemon_cards, progress_callback=on_progress, max_concurrency=4)
+        finally:
+            logging.getLogger().setLevel(prev_level)
+            pbar.close()
 
         # Reconcile any remaining cards in batch to ensure none stay 'pending'
+        processed_cards = pokemon_cards + magic_cards
         with Session(engine) as s:
-            for o in unassigned_cards:
+            for o in processed_cards:
                 db_item = s.exec(select(PlatformOffers).where(PlatformOffers.id == o.id)).first()
                 if db_item:
                     has_id = bool(getattr(o, "cardmarket_product_id", None) or getattr(o, "tcgdex_id", None))
@@ -928,11 +985,14 @@ def run_all(args: argparse.Namespace, config) -> None:
     )
 
     if getattr(args, "assign_existing_cards", False):
-        console.print("[bold cyan]Enriching unassigned card offers in database with TCGDex & Cardmarket IDs...[/bold cyan]")
+        console.print("[bold cyan]Enriching unassigned card offers in database with catalog & Cardmarket IDs...[/bold cyan]")
         try:
             engine = get_engine(args.db_url)
-            count = enrich_card_offers_in_db(engine=engine)
-            console.print(f"[bold green]✓ Successfully matched and updated {count} card offer(s) in the database.[/bold green]")
+            from .scryfall import enrich_magic_offers_in_db
+            magic_count = enrich_magic_offers_in_db(engine=engine)
+            poke_count = enrich_card_offers_in_db(engine=engine)
+            count = magic_count + poke_count
+            console.print(f"[bold green]✓ Successfully matched and updated {count} card offer(s) in the database ({poke_count} Pokémon, {magic_count} Magic).[/bold green]")
         except Exception as exc:
             err_console.print(f"[bold red]Error updating database offers:[/] {exc}")
             sys.exit(1)
@@ -1031,11 +1091,19 @@ def run_all(args: argparse.Namespace, config) -> None:
                         except Exception:
                             pass
 
+                magic_new = [o for o in new_card_offers if (getattr(o, "game", None) or ("magic" if is_magic_offer(o) else "pokemon")).lower() == "magic"]
+                pokemon_new = [o for o in new_card_offers if (getattr(o, "game", None) or ("magic" if is_magic_offer(o) else "pokemon")).lower() == "pokemon"]
                 prev_level = logging.getLogger().level
                 logging.getLogger().setLevel(logging.ERROR)
-                assign_tcgdex_to_offers(new_card_offers, progress_callback=assignment_progress, max_concurrency=4)
-                logging.getLogger().setLevel(prev_level)
-                pbar.close()
+                try:
+                    if magic_new:
+                        from .scryfall import assign_scryfall_to_offers
+                        assign_scryfall_to_offers(magic_new, progress_callback=assignment_progress)
+                    if pokemon_new:
+                        assign_tcgdex_to_offers(pokemon_new, progress_callback=assignment_progress, max_concurrency=4)
+                finally:
+                    logging.getLogger().setLevel(prev_level)
+                    pbar.close()
 
             status.start()
             tcgdex_assigned_count = sum(1 for o in card_offers if o.tcgdex_id)
@@ -1163,7 +1231,7 @@ def run_alerts(args: argparse.Namespace, config) -> None:
 
     app_settings = get_settings()
     if getattr(args, "discord_webhook", None):
-        app_settings = app_settings.model_copy(update={"discord_webhook_url": args.discord_webhook})
+        app_settings = app_settings.model_copy(update={"discord_webhook_url": args.discord_webhook, "magic_cards_webhook": args.discord_webhook, "pokemon_cards_webhook": args.discord_webhook})
     if getattr(args, "no_discord", False):
         app_settings = app_settings.model_copy(update={"discord_alerts_enabled": False})
 
@@ -1173,12 +1241,14 @@ def run_alerts(args: argparse.Namespace, config) -> None:
 
     is_once = bool(getattr(args, "once", False))
 
+    active_webhook = app_settings.magic_cards_webhook or app_settings.discord_webhook_url or app_settings.pokemon_cards_webhook
     console.print(
         Panel.fit(
             f"[bold cyan]Delta Cards Alert Worker[/bold cyan]\n"
             f"[dim]Decoupled Periodic Alert Dispatcher & LLM Verifier[/dim]\n"
             f"[yellow]Database:[/] {engine.url}\n"
             f"[yellow]Discord Enabled:[/] {app_settings.discord_alerts_enabled}\n"
+            f"[yellow]Active Webhook:[/] {active_webhook[:35] + '...' if active_webhook and len(active_webhook) > 35 else active_webhook}\n"
             f"[yellow]Interval:[/] {interval}s ({round(interval / 60, 1)} min)\n"
             f"[yellow]Worker Mode:[/] {'Single run (--once)' if is_once else 'Continuous Loop'}",
             title="🔔 Delta Cards Alert Worker",

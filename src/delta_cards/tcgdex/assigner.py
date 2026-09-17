@@ -294,6 +294,8 @@ def enrich_card_offers_in_db(
     with Session(eng) as session:
         statement = select(PlatformOffers).where(
             PlatformOffers.assigned_state == "pending",
+            PlatformOffers.product_type == "single_card",
+            PlatformOffers.game == "pokemon",
         )
         if limit is not None:
             statement = statement.limit(limit)

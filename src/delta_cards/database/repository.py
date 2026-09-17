@@ -23,6 +23,8 @@ def offer_to_db_model(offer: OfferListing, now: Optional[datetime] = None) -> Pl
     data["updated_at"] = now_utc
     if not data.get("platform"):
         data["platform"] = getattr(offer, "platform", "wallapop") or "wallapop"
+    if not data.get("game"):
+        data["game"] = getattr(offer, "game", "pokemon") or "pokemon"
     if not data.get("assigned_state") or data["assigned_state"] == "pending":
         if data.get("cardmarket_product_id"):
             data["assigned_state"] = "assigned"
@@ -295,6 +297,7 @@ def save_offers_to_db(
                     "title": stmt.excluded.title,
                     "price": stmt.excluded.price,
                     "platform": func.coalesce(stmt.excluded.platform, PlatformOffers.platform),
+                    "game": func.coalesce(stmt.excluded.game, PlatformOffers.game),
                     "is_reserved": stmt.excluded.is_reserved,
                     "shipping_available": stmt.excluded.shipping_available,
                     "description": stmt.excluded.description,
@@ -333,6 +336,7 @@ def save_offers_to_db(
                     "title": stmt.excluded.title,
                     "price": stmt.excluded.price,
                     "platform": func.coalesce(stmt.excluded.platform, PlatformOffers.platform),
+                    "game": func.coalesce(stmt.excluded.game, PlatformOffers.game),
                     "is_reserved": stmt.excluded.is_reserved,
                     "shipping_available": stmt.excluded.shipping_available,
                     "description": stmt.excluded.description,

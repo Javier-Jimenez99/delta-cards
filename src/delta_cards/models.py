@@ -113,6 +113,7 @@ class SearchConfig(BaseModel):
     """Root configuration object loaded from the JSON file."""
     name: str = "Card Search Config"
     description: Optional[str] = None
+    game: str = "pokemon"
     wallapop_settings: WallapopSettings = Field(default_factory=WallapopSettings)
     vinted_settings: VintedSettings = Field(default_factory=VintedSettings)
     search_profiles: List[SearchProfile] = Field(default_factory=list)
@@ -127,6 +128,7 @@ class OfferListing(BaseModel):
     currency: str = "EUR"
     product_type: str
     platform: str = "wallapop"
+    game: str = "pokemon"
     location: Optional[str] = None
     country: Optional[str] = None
     description: Optional[str] = None
@@ -149,5 +151,6 @@ class OfferListing(BaseModel):
     tcgdex_id: Optional[str] = None
     assigned_state: str = "pending"
     alert_status: str = "none"
+
 
 

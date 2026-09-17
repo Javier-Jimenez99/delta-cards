@@ -18,6 +18,7 @@ def raw_to_offer_listing(
     raw: Dict[str, Any],
     profile_id: str,
     product_type: str,
+    game: str = "pokemon",
 ) -> OfferListing:
     """Converts a raw Vinted dictionary into a clean OfferListing model."""
     item_id = str(raw.get("id"))
@@ -31,6 +32,7 @@ def raw_to_offer_listing(
         currency=str(raw.get("currency") or "EUR"),
         product_type=product_type,
         platform="vinted",
+        game=game,
         location=raw.get("location"),
         country=raw.get("country"),
         description=raw.get("description"),
@@ -143,6 +145,7 @@ class VintedScraper:
                         raw=item,
                         profile_id=profile.id,
                         product_type=profile.product_type,
+                        game=getattr(self.config, "game", "pokemon") or "pokemon",
                     )
 
                     if offer.id not in all_offers:

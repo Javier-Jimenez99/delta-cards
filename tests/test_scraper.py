@@ -14,20 +14,39 @@ def test_load_default_config():
 
     config = load_config(config_path)
     assert config.name == "Pokemon Cards Search Config"
-    assert len(config.search_profiles) == 5
+    assert config.game == "pokemon"
+    assert len(config.search_profiles) == 1
 
     profile_ids = [p.id for p in config.search_profiles]
-    assert "booster_box" in profile_ids
-    assert "booster_pack" in profile_ids
-    assert "full_deck" in profile_ids
     assert "single_card" in profile_ids
-    assert "elite_trainer_box" in profile_ids
 
-    # Verify query variations loaded as list of strings
-    bb_profile = next(p for p in config.search_profiles if p.id == "booster_box")
+    # Verify extra_config has the non-single-card profiles
+    extra_config_path = Path(__file__).resolve().parent.parent / "extra_config" / "pokemon_sealed_search.json"
+    assert extra_config_path.is_file(), f"Extra config file not found at {extra_config_path}"
+    extra_config = load_config(extra_config_path)
+    assert len(extra_config.search_profiles) == 4
+    extra_profile_ids = [p.id for p in extra_config.search_profiles]
+    assert "booster_box" in extra_profile_ids
+    assert "booster_pack" in extra_profile_ids
+    assert "full_deck" in extra_profile_ids
+    assert "elite_trainer_box" in extra_profile_ids
+
+    bb_profile = next(p for p in extra_config.search_profiles if p.id == "booster_box")
     assert isinstance(bb_profile.queries, list)
     assert len(bb_profile.queries) > 1
     assert "pokemon booster box" in bb_profile.queries
+
+
+def test_load_all_configs_ignores_extra_config():
+    from delta_cards.config_loader import load_all_configs
+    configs = load_all_configs("config")
+    assert len(configs) >= 2
+    games = {c.game for c in configs}
+    assert "pokemon" in games
+    assert "magic" in games
+    for c in configs:
+        for p in c.search_profiles:
+            assert p.product_type == "single_card"
 
 
 def test_query_variations_normalization():

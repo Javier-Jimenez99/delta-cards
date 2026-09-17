@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 from typing import Literal, Optional
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,10 +21,28 @@ class Settings(BaseSettings):
         description="Database connection URL",
     )
 
-    # Discord Webhook & Alerts
+    # Discord Webhooks & Alerts
+    pokemon_cards_webhook: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "POKEMON_CARDS_WEBHOOK",
+            "pokemon_cards_webhook",
+            "DISCORD_WEBHOOK_URL",
+            "discord_webhook_url",
+        ),
+        description="Discord incoming webhook URL to post Pokémon alerts to",
+    )
+    magic_cards_webhook: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "MAGIC_CARDS_WEBHOOK",
+            "magic_cards_webhook",
+        ),
+        description="Discord incoming webhook URL to post Magic: The Gathering alerts to",
+    )
     discord_webhook_url: Optional[str] = Field(
         default=None,
-        description="Discord incoming webhook URL to post alerts to",
+        description="Resolved active Discord incoming webhook URL to post alerts to",
     )
     discord_alerts_enabled: bool = Field(
         default=True,
@@ -98,6 +116,18 @@ class Settings(BaseSettings):
         if val not in ("or", "and"):
             raise ValueError(f"alert_condition_operator must be either 'or' or 'and', got '{v}'")
         return val
+
+    @model_validator(mode="after")
+    def resolve_webhooks(self) -> "Settings":
+        if not self.discord_webhook_url:
+            self.discord_webhook_url = self.magic_cards_webhook or self.pokemon_cards_webhook
+        return self
+
+    def get_webhook_url(self, game: str = "magic") -> Optional[str]:
+        """Returns the appropriate Discord webhook URL for the given game ('magic' or 'pokemon')."""
+        if game.lower() in ("magic", "mtg"):
+            return self.magic_cards_webhook or self.discord_webhook_url or self.pokemon_cards_webhook
+        return self.pokemon_cards_webhook or self.discord_webhook_url or self.magic_cards_webhook
 
     @property
     def alert_interval(self) -> int:
