@@ -1,0 +1,56 @@
+{
+  "total_samples": 2,
+  "threshold": 0.6,
+  "use_llm": true,
+  "base_precision": 100.0,
+  "llm_precision": 100.0,
+  "overall_base_accuracy": 100.0,
+  "overall_llm_accuracy": 100.0,
+  "mean_llm_latency_ms": 6278.8,
+  "total_false_positives_prevented": 0,
+  "category_breakdown": {
+    "real_wallapop": {
+      "count": 2,
+      "base_accuracy": 100.0,
+      "llm_accuracy": 100.0,
+      "base_fp": 0,
+      "llm_fp": 0,
+      "fp_prevented": 0,
+      "mean_llm_latency_ms": 6278.8
+    }
+  },
+  "detailed_results": [
+    {
+      "sample_id": "sample_001",
+      "category": "real_wallapop",
+      "expected_id": "base1-2",
+      "base_predicted_id": "base1-2",
+      "final_predicted_id": "base1-2",
+      "base_correct": true,
+      "llm_correct": true,
+      "fp_prevented": false,
+      "false_veto": false,
+      "fgir_latency_ms": 2559.2,
+      "llm_latency_ms": 6746.7,
+      "llm_confidence": 90.0,
+      "llm_verified": true,
+      "llm_summary": "\u2713 Match Confirmado (18/20)"
+    },
+    {
+      "sample_id": "sample_002",
+      "category": "real_wallapop",
+      "expected_id": "basep-8",
+      "base_predicted_id": "basep-8",
+      "final_predicted_id": "basep-8",
+      "base_correct": true,
+      "llm_correct": true,
+      "fp_prevented": false,
+      "false_veto": false,
+      "fgir_latency_ms": 2042.8,
+      "llm_latency_ms": 5810.9,
+      "llm_confidence": 95.0,
+      "llm_verified": true,
+      "llm_summary": "\u2713 Match Confirmado (19/20)"
+    }
+  ]
+}

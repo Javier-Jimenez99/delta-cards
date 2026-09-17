@@ -11,6 +11,12 @@ EXCLUDED_PRODUCT_TYPES = {
     "deck",
     "etb",
     "elite_trainer_box",
+    "non_single",
+    "sealed",
+    "tin",
+    "box_set",
+    "bundle",
+    "booster_bundle",
 }
 
 LOT_PATTERNS = [
@@ -39,16 +45,16 @@ def is_card_offer(
     """Verifies whether an offer represents a single card listing.
 
     Strictly excludes booster boxes, booster packs, displays, full decks, ETBs,
-    and bulk lots / mystery boxes.
+    non-single products, and bulk lots / mystery boxes.
     """
     if not product_type:
         return False
     pt = product_type.lower().strip()
     if pt in EXCLUDED_PRODUCT_TYPES:
         return False
-    if any(sealed_term in pt for sealed_term in ["box", "pack", "deck", "etb", "sobre", "caja", "display"]):
+    if any(sealed_term in pt for sealed_term in ["box", "pack", "deck", "etb", "sobre", "caja", "display", "sealed", "non_single"]):
         return False
-    if pt not in ("single_card", "card"):
+    if pt not in ("single_card", "card", "single", "carta"):
         return False
 
     # Check title for clear non-single-card listings (lots, bulk, mystery boxes, decks)

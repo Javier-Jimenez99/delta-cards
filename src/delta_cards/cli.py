@@ -821,14 +821,104 @@ def run_assign(args: argparse.Namespace, config) -> None:
                 break
 
         unassigned_cards = []
+        unassigned_nonsingles = []
         non_card_offers = []
         for r in raw_candidates:
             if is_card_offer(r.product_type, title=r.title, description=r.description):
                 unassigned_cards.append(r)
+            elif (getattr(r, "game", None) or "pokemon").lower() == "pokemon":
+                unassigned_nonsingles.append(r)
             else:
                 non_card_offers.append(r)
 
-        # Non-card offers (booster boxes, packs, lots) cannot have cardmarket products assigned
+        # 1. Process Sealed / Non-Single Pokémon offers
+        if unassigned_nonsingles:
+            from .nonsingles import assign_nonsingles_to_offers
+            console.print(f"\n[bold cyan]Found {len(unassigned_nonsingles)} pending sealed/non-single offer(s) to process.[/bold cyan]")
+            ns_offers = [
+                OfferListing(
+                    id=r.id,
+                    title=r.title,
+                    price=r.price,
+                    currency=r.currency or "EUR",
+                    product_type=r.product_type,
+                    platform=r.platform or "wallapop",
+                    game=r.game or "pokemon",
+                    location=r.location,
+                    country=r.country,
+                    description=r.description,
+                    link=r.link,
+                    image_url=r.image_url,
+                    is_reserved=r.is_reserved or False,
+                    shipping_available=r.shipping_available,
+                    seller_user_id=r.seller_user_id,
+                    seller_link=r.seller_link,
+                    published_date=r.published_date,
+                    search_profile_id=r.search_profile_id,
+                    language=r.language or "es",
+                )
+                for r in unassigned_nonsingles
+            ]
+
+            pbar_ns = tqdm(total=len(ns_offers), desc=f"Assigning sealed products (0/{len(ns_offers)} matched)", unit="item")
+            ns_matched = [0]
+
+            def on_ns_progress(index, total, offer):
+                has_cm = bool(getattr(offer, "cardmarket_product_id", None))
+                if has_cm:
+                    ns_matched[0] += 1
+                state = "assigned" if has_cm else "not_assigned"
+                try:
+                    with Session(engine) as s:
+                        db_item = s.exec(select(PlatformOffers).where(PlatformOffers.id == offer.id)).first()
+                        trend_p = getattr(offer, "cardmarket_trend_price", None)
+                        avg_p = getattr(offer, "cardmarket_avg_price", None)
+                        low_p = getattr(offer, "cardmarket_low_price", None)
+
+                        if has_cm:
+                            cm_id = offer.cardmarket_product_id
+                            cm_url = (
+                                getattr(offer, "cardmarket_url", None)
+                                or f"https://www.cardmarket.com/{offer.language or 'es'}/Pokemon/Products?idProduct={cm_id}"
+                            )
+                            upsert_cardmarket_product(product_id=cm_id, cardmarket_url=cm_url, session=s)
+                            if trend_p is not None or avg_p is not None or low_p is not None:
+                                upsert_cardmarket_price(
+                                    product_id=cm_id,
+                                    language=offer.language or "es",
+                                    min_price_all=low_p,
+                                    avg_price=avg_p,
+                                    trend_price=trend_p,
+                                    session=s,
+                                )
+
+                        if db_item:
+                            db_item.assigned_state = state
+                            db_item.updated_at = datetime.now(timezone.utc)
+                            if has_cm:
+                                db_item.cardmarket_product_id = offer.cardmarket_product_id
+                                db_item.product_type = offer.product_type
+
+                            # Evaluate pricing deal:
+                            ref_p = trend_p if trend_p is not None else avg_p
+                            if has_cm and ref_p is not None and ref_p > 0 and db_item.price < ref_p:
+                                if getattr(db_item, "alert_status", None) != "sent":
+                                    db_item.alert_status = "pending"
+                            else:
+                                if getattr(db_item, "alert_status", None) != "sent":
+                                    db_item.alert_status = "none"
+
+                            s.add(db_item)
+                        s.commit()
+                except Exception as exc:
+                    logger.debug(f"Error saving incremental sealed match for {offer.id}: {exc}")
+                pbar_ns.set_description(f"Assigning sealed products ({ns_matched[0]}/{len(ns_offers)} matched)")
+                pbar_ns.update(1)
+
+            assign_nonsingles_to_offers(ns_offers, progress_callback=on_ns_progress)
+            pbar_ns.close()
+
+        # Non-card offers (unsupported lots, etc.) marked as not_assigned
         if non_card_offers:
             with Session(engine) as s:
                 for item in non_card_offers:
@@ -844,11 +934,12 @@ def run_assign(args: argparse.Namespace, config) -> None:
 
         if not unassigned_cards:
             if is_continuous:
-                console.print(f"[dim]No valid pending single cards in queue. Waiting {interval}s...[/dim]")
+                console.print(f"[dim]No pending single cards in queue. Waiting {interval}s...[/dim]")
                 time.sleep(interval)
                 continue
             else:
-                console.print("[green]✓ No valid pending single card offers to process.[/green]")
+                if not unassigned_nonsingles:
+                    console.print("[green]✓ No valid pending card offers to process.[/green]")
                 break
 
         console.print(f"\n[bold cyan]Found {len(unassigned_cards)} pending card offer(s) to process.[/bold cyan]")
@@ -1108,6 +1199,32 @@ def run_all(args: argparse.Namespace, config) -> None:
             status.start()
             tcgdex_assigned_count = sum(1 for o in card_offers if o.tcgdex_id)
 
+        nonsingle_offers = [
+            o for o in offers
+            if not is_card_offer(o.product_type, title=o.title, description=o.description)
+            and (getattr(o, "game", None) or "pokemon").lower() == "pokemon"
+        ]
+        nonsingle_assigned_count = 0
+        if not getattr(args, "skip_tcgdex", False) and nonsingle_offers:
+            status.stop()
+            from .nonsingles import assign_nonsingles_to_offers
+            pbar_ns = tqdm(total=len(nonsingle_offers), desc=f"Assigning sealed products (0/{len(nonsingle_offers)} matched)", unit="item")
+            ns_matched = [0]
+
+            def assignment_ns_progress(index, total, offer):
+                if getattr(offer, "cardmarket_product_id", None):
+                    offer.assigned_state = "assigned"
+                    ns_matched[0] += 1
+                else:
+                    offer.assigned_state = "not_assigned"
+                pbar_ns.set_description(f"Assigning sealed products ({ns_matched[0]}/{len(nonsingle_offers)} matched)")
+                pbar_ns.update(1)
+
+            assign_nonsingles_to_offers(nonsingle_offers, progress_callback=assignment_ns_progress)
+            pbar_ns.close()
+            status.start()
+            nonsingle_assigned_count = sum(1 for o in nonsingle_offers if o.cardmarket_product_id)
+
         status.update("[bold cyan]Saving scraped data...[/bold cyan]")
         saved_files = scraper.save_results(offers)
 
@@ -1122,6 +1239,8 @@ def run_all(args: argparse.Namespace, config) -> None:
     extra_lines = []
     if not getattr(args, "skip_tcgdex", False) and card_offers:
         extra_lines.append(f"  • [bold]TCGDEX / CARDMARKET ENRICHMENT:[/bold] [green]{tcgdex_assigned_count}/{len(card_offers)} card offer(s) identified[/green]")
+    if not getattr(args, "skip_tcgdex", False) and nonsingle_offers:
+        extra_lines.append(f"  • [bold]SEALED CARDMARKET ENRICHMENT:[/bold] [green]{nonsingle_assigned_count}/{len(nonsingle_offers)} sealed product(s) identified[/green]")
     db_note = None
     if db_saved_count is not None:
         db_note = f"  • [bold]DATABASE ('PlatformOffers'):[/bold] [green]{db_saved_count} offer(s) saved/updated[/green]"

@@ -15,10 +15,11 @@ def test_load_default_config():
     config = load_config(config_path)
     assert config.name == "Pokemon Cards Search Config"
     assert config.game == "pokemon"
-    assert len(config.search_profiles) == 1
+    assert len(config.search_profiles) == 2
 
     profile_ids = [p.id for p in config.search_profiles]
     assert "single_card" in profile_ids
+    assert "pokemon_sealed" in profile_ids
 
     # Verify extra_config has the non-single-card profiles
     extra_config_path = Path(__file__).resolve().parent.parent / "extra_config" / "pokemon_sealed_search.json"
@@ -46,7 +47,7 @@ def test_load_all_configs_ignores_extra_config():
     assert "magic" in games
     for c in configs:
         for p in c.search_profiles:
-            assert p.product_type == "single_card"
+            assert p.product_type in ("single_card", "non_single")
 
 
 def test_query_variations_normalization():

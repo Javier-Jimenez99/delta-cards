@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import httpx
 from pydantic import BaseModel
 
-from ..models import OfferListing
+from ..models import OfferListing, is_card_offer
 from ..settings import Settings, get_settings
 
 logger = logging.getLogger("delta_cards.alerts")
@@ -496,14 +496,35 @@ class DiscordAlertService:
             logger.debug("No offers met the configured Discord alert conditions.")
             return 0
 
-        # Group matching items by game
-        pokemon_embeds = []
+        # Group matching items by game and product category
+        pokemon_card_embeds = []
+        pokemon_booster_embeds = []
+        pokemon_box_embeds = []
         magic_embeds = []
+
         for off, emb in matching_items:
             if (getattr(off, "game", None) == "magic") or is_magic_offer(off):
                 magic_embeds.append(emb)
             else:
-                pokemon_embeds.append(emb)
+                pt = str(getattr(off, "product_type", "") or "").lower().strip()
+                if pt in ("booster_pack", "booster", "blister", "pack", "sobre"):
+                    pokemon_booster_embeds.append(emb)
+                elif pt in (
+                    "booster_box",
+                    "display",
+                    "etb",
+                    "elite_trainer_box",
+                    "caja",
+                    "box",
+                    "tin",
+                    "box_set",
+                    "deck",
+                    "bundle",
+                    "booster_bundle",
+                ):
+                    pokemon_box_embeds.append(emb)
+                else:
+                    pokemon_card_embeds.append(emb)
 
         emoji = (self.settings.alert_wild_offer_emoji or "").strip()
         pokemon_msg = f"{emoji} ¡Ha aparecido una oferta salvaje!" if emoji else DEFAULT_OFFER_ALERT_MESSAGE
@@ -513,22 +534,73 @@ class DiscordAlertService:
             magic_msg = f"{emoji} ¡Ha aparecido una oferta salvaje de Magic!"
 
         total_sent = 0
-        if pokemon_embeds:
-            pok_webhook = self.webhook_url or self.settings.pokemon_cards_webhook or self.settings.discord_webhook_url
-            if pok_webhook:
-                logger.info(f"Dispatching {len(pokemon_embeds)} Pokémon Discord alert(s)...")
+
+        # 1. Pokémon Single Cards
+        if pokemon_card_embeds:
+            card_wh = (
+                self.webhook_url
+                or self.settings.pokemon_cards_webhook
+                or self.settings.discord_webhook_url
+            )
+            if card_wh:
+                logger.info(f"Dispatching {len(pokemon_card_embeds)} Pokémon Single Card alert(s)...")
                 if send_discord_webhook(
-                    webhook_url=pok_webhook,
-                    embeds=pokemon_embeds,
+                    webhook_url=card_wh,
+                    embeds=pokemon_card_embeds,
                     content=pokemon_msg,
                     delay_between_offers=self.settings.time_between_offers,
                 ):
-                    total_sent += len(pokemon_embeds)
+                    total_sent += len(pokemon_card_embeds)
             else:
-                logger.warning("No POKEMON_CARDS_WEBHOOK configured. Skipping Pokémon alerts.")
+                logger.warning("No POKEMON_CARDS_WEBHOOK configured. Skipping Pokémon card alerts.")
 
+        # 2. Pokémon Booster / Blister Packs
+        if pokemon_booster_embeds:
+            booster_wh = (
+                self.webhook_url
+                or self.settings.pokemon_booster_webhook
+                or self.settings.pokemon_cards_webhook
+                or self.settings.discord_webhook_url
+            )
+            if booster_wh:
+                logger.info(f"Dispatching {len(pokemon_booster_embeds)} Pokémon Booster Pack alert(s)...")
+                if send_discord_webhook(
+                    webhook_url=booster_wh,
+                    embeds=pokemon_booster_embeds,
+                    content=pokemon_msg,
+                    delay_between_offers=self.settings.time_between_offers,
+                ):
+                    total_sent += len(pokemon_booster_embeds)
+            else:
+                logger.warning("No POKEMON_BOOSTER_WEBHOOK configured. Skipping Pokémon booster alerts.")
+
+        # 3. Pokémon Booster Boxes / Displays / ETBs
+        if pokemon_box_embeds:
+            box_wh = (
+                self.webhook_url
+                or self.settings.pokemon_booster_box_webhook
+                or self.settings.pokemon_cards_webhook
+                or self.settings.discord_webhook_url
+            )
+            if box_wh:
+                logger.info(f"Dispatching {len(pokemon_box_embeds)} Pokémon Booster Box alert(s)...")
+                if send_discord_webhook(
+                    webhook_url=box_wh,
+                    embeds=pokemon_box_embeds,
+                    content=pokemon_msg,
+                    delay_between_offers=self.settings.time_between_offers,
+                ):
+                    total_sent += len(pokemon_box_embeds)
+            else:
+                logger.warning("No POKEMON_BOOSTER_BOX_WEBHOOK configured. Skipping Pokémon box alerts.")
+
+        # 4. Magic Cards
         if magic_embeds:
-            mag_webhook = self.webhook_url or self.settings.magic_cards_webhook or self.settings.discord_webhook_url
+            mag_webhook = (
+                self.webhook_url
+                or self.settings.magic_cards_webhook
+                or self.settings.discord_webhook_url
+            )
             if mag_webhook:
                 logger.info(f"Dispatching {len(magic_embeds)} Magic Discord alert(s)...")
                 if send_discord_webhook(
@@ -678,9 +750,13 @@ class AlertWorkerService:
             offer_game = offer_listing.game
             is_magic = (offer_game == "magic")
 
-            # LLM False-Positive Verification exclusively executed here before dispatch (for Pokémon cards)
+            # LLM False-Positive Verification exclusively executed here before dispatch (for Pokémon single cards)
             llm_res = None
-            if self.settings.llm_verifier_enabled and not is_magic:
+            if (
+                self.settings.llm_verifier_enabled
+                and not is_magic
+                and is_card_offer(offer.product_type, title=offer.title)
+            ):
                 try:
                     if self.verifier is None:
                         from ..recognition.llm_verifier import get_llm_verifier
@@ -720,13 +796,14 @@ class AlertWorkerService:
             webhook_url = self.webhook_url
             if not webhook_url:
                 if is_magic:
-                    webhook_url = self.settings.magic_cards_webhook or self.settings.discord_webhook_url
+                    webhook_url = self.settings.get_webhook_url("magic")
                 else:
-                    webhook_url = self.settings.pokemon_cards_webhook or self.settings.discord_webhook_url
+                    webhook_url = self.settings.get_webhook_url("pokemon", offer.product_type)
 
             if not webhook_url:
-                target_wh = "MAGIC_CARDS_WEBHOOK" if is_magic else "POKEMON_CARDS_WEBHOOK"
-                logger.debug(f"No {target_wh} configured. Skipping Discord alert.")
+                logger.debug(
+                    f"No Discord webhook configured for offer '{offer.title[:30]}' ({offer.product_type}). Skipping alert."
+                )
                 return None
 
             ok = send_discord_webhook(

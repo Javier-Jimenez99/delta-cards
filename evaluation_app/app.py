@@ -32,12 +32,22 @@ SRC_DIR = os.path.join(PROJECT_ROOT, "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
-GROUND_TRUTH_PATH = os.path.join(PROJECT_ROOT, "data", "evaluation_set", "ground_truth.json")
-IMAGES_DIR = os.path.join(PROJECT_ROOT, "data", "evaluation_set", "images")
+_eval_set_tests = os.path.join(PROJECT_ROOT, "data", "tests", "evaluation_set")
+if os.path.exists(_eval_set_tests):
+    GROUND_TRUTH_PATH = os.path.join(_eval_set_tests, "ground_truth.json")
+    IMAGES_DIR = os.path.join(_eval_set_tests, "images")
+    LAST_EVAL_FILE = os.path.join(PROJECT_ROOT, "data", "tests", "evaluation_last_run.json")
+    DEBUG_DIR = os.path.join(PROJECT_ROOT, "data", "tests", "evaluation_debug")
+    DEBUG_REL = "data/tests/evaluation_debug"
+else:
+    GROUND_TRUTH_PATH = os.path.join(PROJECT_ROOT, "data", "evaluation_set", "ground_truth.json")
+    IMAGES_DIR = os.path.join(PROJECT_ROOT, "data", "evaluation_set", "images")
+    LAST_EVAL_FILE = os.path.join(PROJECT_ROOT, "data", "evaluation_last_run.json")
+    DEBUG_DIR = os.path.join(PROJECT_ROOT, "data", "evaluation_debug")
+    DEBUG_REL = "data/evaluation_debug"
+
 SQLITE_PATH = os.path.join(PROJECT_ROOT, "data", "pokemon_cards_meta.sqlite")
 CACHE_DIR = os.path.join(PROJECT_ROOT, "data", "images_cache")
-LAST_EVAL_FILE = os.path.join(PROJECT_ROOT, "data", "evaluation_last_run.json")
-DEBUG_DIR = os.path.join(PROJECT_ROOT, "data", "evaluation_debug")
 os.makedirs(DEBUG_DIR, exist_ok=True)
 
 st.set_page_config(
@@ -831,10 +841,10 @@ with tab_eval:
             annotated_rel = None
 
             if card_img is not None:
-                yolo_crop_rel = f"data/evaluation_debug/{sid}_yolo.jpg"
+                yolo_crop_rel = f"{DEBUG_REL}/{sid}_yolo.jpg"
                 cv2.imwrite(os.path.join(PROJECT_ROOT, yolo_crop_rel), card_img)
             if annotated_img is not None:
-                annotated_rel = f"data/evaluation_debug/{sid}_annotated.jpg"
+                annotated_rel = f"{DEBUG_REL}/{sid}_annotated.jpg"
                 cv2.imwrite(os.path.join(PROJECT_ROOT, annotated_rel), annotated_img)
 
             eval_results.append({

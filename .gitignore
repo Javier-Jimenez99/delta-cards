@@ -28,16 +28,20 @@ venv/
 .coverage
 
 data/output/
+data/images_cache/
+data/tests/evaluation_debug/
 models/
 data/models/
 *.pt
 *.gguf
 *.onnx
 onnx/
+*.usearch
+*.sqlite
 *.db
+*.db.bak
 *.db-wal
 *.db-shm
-data/
 
 # Logs and runtime files
 *.log

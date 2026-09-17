@@ -1,6 +1,7 @@
 """Unit and integration tests for the Pokémon TCG recognition pipeline."""
 
 import asyncio
+import os
 import cv2
 import numpy as np
 import pytest
@@ -24,12 +25,19 @@ def synthetic_card_image():
     return img
 
 
+SAMPLE_CARD_IMG = (
+    "data/tests/evaluation_set/images/sample_001_wallapop_base1-2.jpg"
+    if os.path.exists("data/tests/evaluation_set/images/sample_001_wallapop_base1-2.jpg")
+    else "data/evaluation_set/images/sample_001_wallapop_base1-2.jpg"
+)
+
+
 class TestVisualDetector:
     """Tests for VisualCardDetector."""
 
     def test_isolate_real_card(self):
         detector = VisualCardDetector()
-        img_path = "data/evaluation_set/images/sample_001_wallapop_base1-2.jpg"
+        img_path = SAMPLE_CARD_IMG
         crop = detector.isolate_card(img_path)
         assert isinstance(crop, np.ndarray)
         assert crop.ndim == 3
@@ -38,7 +46,7 @@ class TestVisualDetector:
 
     def test_isolate_with_debug(self):
         detector = VisualCardDetector()
-        img_path = "data/evaluation_set/images/sample_001_wallapop_base1-2.jpg"
+        img_path = SAMPLE_CARD_IMG
         crop, annotated = detector.isolate_card_with_debug(img_path)
         assert isinstance(crop, np.ndarray)
         assert annotated.shape[:2] == cv2.imread(img_path).shape[:2]
@@ -87,12 +95,12 @@ class TestPipelineEndToEnd:
         )
         assert "status" in result
         assert "profiling" in result
-        assert "ocr_s" in result["profiling"]
+        assert "total_s" in result["profiling"]
 
     @pytest.mark.asyncio
     async def test_process_card_listing_real_image(self):
         pipe = CardRecognitionPipeline()
-        img_path = "data/evaluation_set/images/sample_001_wallapop_base1-2.jpg"
+        img_path = SAMPLE_CARD_IMG
 
         result = await pipe.process_card_listing(
             image_source=img_path,

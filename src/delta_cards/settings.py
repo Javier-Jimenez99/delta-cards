@@ -30,7 +30,23 @@ class Settings(BaseSettings):
             "DISCORD_WEBHOOK_URL",
             "discord_webhook_url",
         ),
-        description="Discord incoming webhook URL to post Pokémon alerts to",
+        description="Discord incoming webhook URL to post Pokémon single card alerts to",
+    )
+    pokemon_booster_webhook: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "POKEMON_BOOSTER_WEBHOOK",
+            "pokemon_booster_webhook",
+        ),
+        description="Discord incoming webhook URL to post Pokémon booster and blister alerts to",
+    )
+    pokemon_booster_box_webhook: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "POKEMON_BOOSTER_BOX_WEBHOOK",
+            "pokemon_booster_box_webhook",
+        ),
+        description="Discord incoming webhook URL to post Pokémon booster box, ETB, and sealed box alerts to",
     )
     magic_cards_webhook: Optional[str] = Field(
         default=None,
@@ -120,14 +136,61 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def resolve_webhooks(self) -> "Settings":
         if not self.discord_webhook_url:
-            self.discord_webhook_url = self.magic_cards_webhook or self.pokemon_cards_webhook
+            self.discord_webhook_url = (
+                self.magic_cards_webhook
+                or self.pokemon_cards_webhook
+                or self.pokemon_booster_box_webhook
+                or self.pokemon_booster_webhook
+            )
         return self
 
-    def get_webhook_url(self, game: str = "magic") -> Optional[str]:
-        """Returns the appropriate Discord webhook URL for the given game ('magic' or 'pokemon')."""
-        if game.lower() in ("magic", "mtg"):
+    def get_webhook_url(
+        self,
+        game: str = "pokemon",
+        product_type: Optional[str] = None,
+    ) -> Optional[str]:
+        """Returns the appropriate Discord webhook URL for the given game and product category."""
+        if str(game).lower() in ("magic", "mtg"):
             return self.magic_cards_webhook or self.discord_webhook_url or self.pokemon_cards_webhook
-        return self.pokemon_cards_webhook or self.discord_webhook_url or self.magic_cards_webhook
+
+        pt = str(product_type or "").lower().strip()
+
+        # Booster / Blister pack alerts
+        if pt in ("booster_pack", "booster", "blister", "pack", "sobre"):
+            return (
+                self.pokemon_booster_webhook
+                or self.pokemon_cards_webhook
+                or self.discord_webhook_url
+            )
+
+        # Booster Box / Display / ETB / Sealed box alerts
+        if pt in (
+            "booster_box",
+            "display",
+            "etb",
+            "elite_trainer_box",
+            "caja",
+            "box",
+            "tin",
+            "box_set",
+            "deck",
+            "bundle",
+            "booster_bundle",
+        ):
+            return (
+                self.pokemon_booster_box_webhook
+                or self.pokemon_cards_webhook
+                or self.discord_webhook_url
+            )
+
+        # Default / Single cards
+        return (
+            self.pokemon_cards_webhook
+            or self.discord_webhook_url
+            or self.pokemon_booster_box_webhook
+            or self.pokemon_booster_webhook
+            or self.magic_cards_webhook
+        )
 
     @property
     def alert_interval(self) -> int:

@@ -11,10 +11,14 @@ async def test_pipeline_fgir_identification():
     assert pipeline.use_fgir is True
     assert len(pipeline.vector_index) > 0
 
-    # Pick an indexed card image
-    sample_img = "data/evaluation_set/images/sample_015_spanish_xy6-075.jpg"
+    eval_images_dir = (
+        "data/tests/evaluation_set/images"
+        if os.path.exists("data/tests/evaluation_set/images")
+        else "data/evaluation_set/images"
+    )
+    sample_img = os.path.join(eval_images_dir, "sample_015_spanish_xy6-075.jpg")
     if not os.path.exists(sample_img):
-        for root, _, files in os.walk("data/evaluation_set/images"):
+        for root, _, files in os.walk(eval_images_dir):
             for f in sorted(files):
                 if f.endswith((".png", ".jpg", ".webp")) and "fake" not in f:
                     sample_img = os.path.join(root, f)

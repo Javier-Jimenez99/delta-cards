@@ -35,9 +35,15 @@ from delta_cards.recognition.pipeline import CardRecognitionPipeline
 
 logging.basicConfig(level=logging.WARNING)
 
-GROUND_TRUTH_PATH = "data/evaluation_set/ground_truth.json"
-IMAGES_DIR = "data/evaluation_set/images"
-OUTPUT_RESULTS_JSON = "data/evaluation_results.json"
+_eval_set_tests = Path("data/tests/evaluation_set")
+if _eval_set_tests.exists():
+    GROUND_TRUTH_PATH = str(_eval_set_tests / "ground_truth.json")
+    IMAGES_DIR = str(_eval_set_tests / "images")
+    OUTPUT_RESULTS_JSON = "data/tests/evaluation_results.json"
+else:
+    GROUND_TRUTH_PATH = "data/evaluation_set/ground_truth.json"
+    IMAGES_DIR = "data/evaluation_set/images"
+    OUTPUT_RESULTS_JSON = "data/evaluation_results.json"
 
 console = Console()
 
