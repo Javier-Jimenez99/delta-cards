@@ -35,6 +35,7 @@ dependencies = [
     "gliner>=0.2.29",
     "sentence-transformers>=6.0.1",
     "rank-bm25>=0.2.2",
+    "flashtext>=2.7",
 ]
 
 [project.scripts]

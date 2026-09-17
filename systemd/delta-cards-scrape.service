@@ -1,5 +1,5 @@
 [Unit]
-Description=Delta Cards - Scrape Single Cards (Wallapop & Vinted)
+Description=Delta Cards - Scrape Marketplace Listings (Wallapop & Vinted)
 After=network-online.target
 Wants=network-online.target
 
@@ -9,7 +9,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/delta-cards
 Environment="PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/usr/local/bin/uv run delta-cards scrape --platform all -p single_card
+ExecStart=/usr/local/bin/uv run delta-cards scrape --platform all
 StandardOutput=journal
 StandardError=journal
 
