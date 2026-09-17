@@ -157,6 +157,22 @@ class LLMVerificationResult(BaseModel):
     inference_time_s: float = 0.0
     raw_response: str = ""
 
+    @property
+    def confirmed(self) -> bool:
+        return self.is_verified
+
+    @property
+    def verdict(self) -> str:
+        return self.verdict_summary
+
+    @property
+    def reasoning(self) -> str:
+        return self.verdict_summary
+
+    @property
+    def answers(self) -> Dict[str, bool]:
+        return self.checks
+
 
 def compute_factual_checks(
     query_ocr: Any,
@@ -198,22 +214,35 @@ def compute_factual_checks(
     t_total = ""
     t_hp = ""
     t_attacks = []
+    t_stage = ""
+    t_types = []
+    t_set_name = ""
+    t_set_id = ""
+    t_rarity = ""
+
     if isinstance(tcgdex_info, dict):
         t_name = str(tcgdex_info.get("name") or "").lower()
         t_local_id = str(tcgdex_info.get("localId") or tcgdex_info.get("local_id") or "").lower()
         if isinstance(tcgdex_info.get("set"), dict):
             t_total = str(tcgdex_info.get("set", {}).get("cardCount", {}).get("total") or "")
+            t_set_name = str(tcgdex_info.get("set", {}).get("name") or "").lower()
+            t_set_id = str(tcgdex_info.get("set", {}).get("id") or "").lower()
         if not t_total:
             t_total = str(tcgdex_info.get("total_cards") or "")
+        if not t_set_name:
+            t_set_name = str(tcgdex_info.get("set_name") or "").lower()
+        if not t_set_id:
+            t_set_id = str(tcgdex_info.get("set_id") or "").lower()
         t_hp = str(tcgdex_info.get("hp") or "")
-        t_attacks = [
-            (a.get("name") if isinstance(a, dict) else str(a)).lower()
-            for a in tcgdex_info.get("attacks", [])
-        ]
+        t_attacks = tcgdex_info.get("attacks", [])
+        t_stage = str(tcgdex_info.get("stage") or "").lower()
+        t_types = [str(t).lower() for t in tcgdex_info.get("types", [])]
+        t_rarity = str(tcgdex_info.get("rarity") or "").lower()
 
     clean_t_name = re.sub(r"[^a-z0-9]", "", t_name)
     clean_q_full = re.sub(r"[^a-z0-9]", "", q_full)
     clean_w_full = re.sub(r"[^a-z0-9]", "", w_full)
+    clean_w_title = re.sub(r"[^a-z0-9]", "", w_title.lower())
 
     # Strip affixes and card mechanics to extract core Pokémon name tokens
     AFFIXES = {
@@ -229,113 +258,214 @@ def compute_factual_checks(
     ]
 
     # 1. Pokemon name match: is official name or core token in photo or listing?
-    name_in_photo = (clean_t_name in clean_q_full) if clean_t_name else False
-    name_in_wallapop = (clean_t_name in clean_w_full) if clean_t_name else False
-    token_in_photo_or_listing = any(tok in clean_q_full or tok in clean_w_full for tok in t_name_tokens)
-    q01 = bool(name_in_photo or name_in_wallapop or token_in_photo_or_listing or not clean_t_name)
+    if clean_t_name:
+        name_in_photo = (clean_t_name in clean_q_full)
+        name_in_wallapop = (clean_t_name in clean_w_title or clean_t_name in clean_w_full)
+        token_in_photo = any(tok in clean_q_full for tok in t_name_tokens)
+        token_in_title = any(tok in clean_w_title for tok in t_name_tokens)
+        q01 = bool(name_in_photo or name_in_wallapop or token_in_photo or token_in_title)
+    else:
+        q01 = True
 
     # 2. Stage/evolution match
-    q02 = True
-    for stage in ["vmax", "vstar", "ex", "gx", "fase 1", "fase 2", "stage 1", "stage 2"]:
-        if stage in t_name:
-            q02 = (stage in q_full) or (stage in w_full) or (stage in c_full)
-            break
+    stages = ["vmax", "vstar", "ex", "gx", "fase 1", "stage 1", "fase 2", "stage 2", "basic", "básico", "basico"]
+    matched_stage_card = [s for s in stages if s in t_name or s in t_stage]
+    if matched_stage_card:
+        q02 = any(s in q_full or s in w_full or s in c_full for s in matched_stage_card)
+    elif t_name:
+        # Standard basic card: check no contradictory evolution stage claimed
+        has_conflict = any(s in q_full or s in w_title.lower() for s in ["vmax", "vstar", "stage 2", "fase 2"])
+        q02 = not has_conflict
+    else:
+        q02 = True
 
     # 3. HP alignment: verified if HP is found and matches
-    q03 = True
-    if t_hp and q_hp:
-        q03 = (t_hp == q_hp) or (t_hp in q_full)
-    elif t_hp:
-        q03 = (t_hp in q_full) or (t_hp in w_full)
+    if t_hp:
+        clean_hp = t_hp.strip()
+        if q_hp and q_hp == clean_hp:
+            q03 = True
+        elif re.search(rf"\b{clean_hp}\s*(hp|ps)\b", q_full) or re.search(rf"\b(hp|ps)\s*{clean_hp}\b", q_full):
+            q03 = True
+        elif re.search(rf"\b{clean_hp}\s*(hp|ps)\b", w_full) or re.search(rf"\b(hp|ps)\s*{clean_hp}\b", w_full):
+            q03 = True
+        elif clean_hp in q_full and int(clean_hp) >= 40:
+            q03 = True
+        else:
+            q03 = False
+    else:
+        q03 = True
 
-    # 4. Type consistent
-    q04 = True
+    # 4. Pokemon type consistent
+    if t_types:
+        TYPE_MAP = {
+            "fire": ["fuego", "fire"],
+            "water": ["agua", "water"],
+            "grass": ["planta", "grass"],
+            "lightning": ["rayo", "eléctrico", "lightning"],
+            "psychic": ["psíquico", "psiquico", "psychic"],
+            "fighting": ["lucha", "fighting"],
+            "darkness": ["oscuridad", "siniestro", "darkness", "dark"],
+            "metal": ["metal", "acero", "steel"],
+            "dragon": ["dragón", "dragon"],
+            "fairy": ["hada", "fairy"],
+            "colorless": ["incoloro", "normal", "colorless"],
+        }
+        all_type_synonyms = []
+        for t in t_types:
+            all_type_synonyms.extend(TYPE_MAP.get(t, [t]))
+        q04 = any(ts in q_full or ts in w_full or ts in c_full for ts in all_type_synonyms)
+    else:
+        q04 = True
 
-    # 5. Collector number match: must be evidenced in photo or listing
-    q05 = True
+    # 5. Collector number match
     if t_local_id:
         num_clean = re.sub(r"^0+", "", t_local_id)
-        q05 = bool(
-            (t_local_id in q_full)
-            or (num_clean in q_full)
-            or (t_local_id in w_full)
-            or (num_clean in w_full)
-            or any(t_local_id in f or num_clean in f for f in q_fracs)
-        )
+        q05 = False
+        for f in q_fracs:
+            if t_local_id in f or (num_clean and num_clean in f):
+                q05 = True
+                break
+        if not q05:
+            pattern = rf"(?<!\d){re.escape(t_local_id)}(?!\d)"
+            if re.search(pattern, q_full):
+                q05 = True
+            elif num_clean and len(num_clean) >= 2 and re.search(rf"(?<!\d){re.escape(num_clean)}(?!\d)", q_full):
+                q05 = True
+            elif re.search(pattern, w_title) or (num_clean and len(num_clean) >= 2 and re.search(rf"(?<!\d){re.escape(num_clean)}(?!\d)", w_title)):
+                q05 = True
+    else:
+        q05 = True
 
-    # 6. Total cards match: confirmed if evidenced
-    q06 = True
+    # 6. Total cards count match
     if t_total:
-        q06 = bool(t_total in q_full or t_total in w_full or any(t_total in f for f in q_fracs))
+        clean_tot = t_total.strip()
+        q06 = False
+        for f in q_fracs:
+            if clean_tot in f:
+                q06 = True
+                break
+        if not q06:
+            if f"/{clean_tot}" in q_full or f"/{clean_tot}" in w_full:
+                q06 = True
+            elif len(clean_tot) >= 3 and re.search(rf"(?<!\d){re.escape(clean_tot)}(?!\d)", q_full):
+                q06 = True
+    else:
+        q06 = True
 
-    # 7. Promo code
-    q07 = True
+    # 7. Promo code alignment
+    is_promo_card = any(p in t_set_id for p in ["basep", "swshp", "smp", "xyp", "bwp", "dp", "np", "hsp"]) or "promo" in t_set_name
+    if is_promo_card:
+        q07 = "promo" in w_full or "promo" in q_full or bool(t_local_id and t_local_id in w_full)
+    else:
+        q07 = "promo" not in w_title.lower()
 
     # 8. Set expansion consistent
-    q08 = True
-    t_set_name = ""
-    if isinstance(tcgdex_info, dict):
-        t_set_name = str(tcgdex_info.get("set", {}).get("name") or tcgdex_info.get("set_name") or "").lower()
-    clean_set_name = re.sub(r"[^a-z0-9]", "", t_set_name)
-    if clean_set_name and (clean_set_name in clean_w_full or clean_set_name in clean_q_full):
-        q08 = True
+    if t_set_name or t_set_id:
+        clean_set_name = re.sub(r"[^a-z0-9]", "", t_set_name)
+        set_tokens = [re.sub(r"[^a-z0-9]", "", w) for w in t_set_name.split() if len(w) >= 4]
+        if clean_set_name and (clean_set_name in clean_w_full or clean_set_name in clean_q_full):
+            q08 = True
+        elif any(tok in clean_w_full or tok in clean_q_full for tok in set_tokens):
+            q08 = True
+        elif t_set_id and (t_set_id in w_full or t_set_id in q_full):
+            q08 = True
+        else:
+            q08 = False
     else:
-        # Check if known distinct vintage sets are mentioned in listing but differ from candidate set
-        known_vintage_sets = ["jungle", "fossil", "aquapolis", "base set 2", "neo genesis", "neo discovery"]
-        mentioned_sets = [s for s in known_vintage_sets if s in w_full and s not in t_name]
-        if mentioned_sets:
-            q08 = any(s in t_set_name for s in mentioned_sets)
+        q08 = True
 
-    # 9. Primary attack name: confirmed if primary attack appears in OCR or listing
-    q09 = True
+    # 9. Primary attack name
     if t_attacks:
-        att0 = re.sub(r"[^a-z0-9]", "", t_attacks[0])
-        if att0 and len(att0) >= 3:
-            q09 = bool((att0 in clean_q_full) or (att0 in clean_w_full))
+        att0 = t_attacks[0].get("name", "") if isinstance(t_attacks[0], dict) else str(t_attacks[0])
+        clean_att0 = re.sub(r"[^a-z0-9]", "", att0.lower())
+        q09 = bool(clean_att0 and len(clean_att0) >= 3 and ((clean_att0 in clean_q_full) or (clean_att0 in clean_w_full)))
+    else:
+        q09 = True
 
-    # 10. Attack damage
-    q10 = True
+    # 10. Attack damage match
+    if t_attacks:
+        dmg0 = str(t_attacks[0].get("damage", "") if isinstance(t_attacks[0], dict) else "")
+        clean_dmg = re.sub(r"[^\d]", "", dmg0)
+        if clean_dmg:
+            q10 = bool(re.search(rf"(?<!\d){clean_dmg}(?!\d)", q_full))
+        else:
+            q10 = True
+    else:
+        q10 = True
 
-    # 11. Secondary attack or ability: confirmed if 2nd attack appears
-    q11 = True
+    # 11. Secondary attack or ability
     if len(t_attacks) > 1:
-        att1 = re.sub(r"[^a-z0-9]", "", t_attacks[1])
-        if att1 and len(att1) >= 3:
-            q11 = bool((att1 in clean_q_full) or (att1 in clean_w_full))
+        att1 = t_attacks[1].get("name", "") if isinstance(t_attacks[1], dict) else str(t_attacks[1])
+        clean_att1 = re.sub(r"[^a-z0-9]", "", att1.lower())
+        q11 = bool(clean_att1 and len(clean_att1) >= 3 and ((clean_att1 in clean_q_full) or (clean_att1 in clean_w_full)))
+    else:
+        q11 = True
 
-    # 12. Energy rules / retreat
-    q12 = True
+    # 12. Energy rules or retreat
+    mechanics_in_card = [m for m in ["ex", "gx", "v", "vmax", "vstar", "radiant", "tera"] if m in t_name or m in t_stage]
+    if mechanics_in_card:
+        q12 = any(m in q_full or m in w_title.lower() for m in mechanics_in_card)
+    else:
+        q12 = True
 
     # 13. OCR text subset valid
-    q13 = bool(clean_q_full) or not c_full
+    if clean_q_full:
+        matches_found = 0
+        if clean_t_name and clean_t_name in clean_q_full:
+            matches_found += 1
+        if t_local_id and re.search(rf"(?<!\d){t_local_id}(?!\d)", q_full):
+            matches_found += 1
+        if t_hp and t_hp in q_full:
+            matches_found += 1
+        q13 = matches_found >= 1 or not clean_t_name
+    else:
+        q13 = not c_full
 
     # 14. Card mechanic badge
     q14 = q02
 
     # 15. Rarity visual indicator
-    q15 = True
+    if "holo" in w_full or "reverse" in w_full or "secret" in w_full:
+        if "holo" in t_rarity or "rare" in t_rarity or "ultra" in t_rarity or "secret" in t_rarity or not t_rarity:
+            q15 = True
+        else:
+            q15 = False
+    else:
+        q15 = True
 
     # 16. No contradictory pokemon
     q16 = True
-    common_names = ["charizard", "pikachu", "mewtwo", "mew", "rayquaza", "lugia", "umbreon", "gengar"]
+    common_names = ["charizard", "pikachu", "mewtwo", "mew", "rayquaza", "lugia", "umbreon", "gengar", "blastoise", "venusaur", "eevee", "snorlax", "lucario", "latios", "latias", "noibat"]
     for cn in common_names:
-        if cn in q_full and cn not in t_name and cn not in w_full:
+        if (cn in q_full or cn in w_title.lower()) and cn not in t_name and cn not in w_full:
             q16 = False
             break
 
     # 17. Wallapop title mentions card
-    q17 = bool(clean_t_name in clean_w_full or (t_local_id and t_local_id in w_full) or token_in_photo_or_listing) if clean_w_full else True
+    q17 = bool(clean_t_name in clean_w_title or any(tok in clean_w_title for tok in t_name_tokens) or not clean_t_name)
 
     # 18. Wallapop description consistent
-    q18 = True
+    lot_or_fake_desc = any(w in w_desc.lower() for w in ["proxy", "replica", "copia", "falsa", "no original", "lote de", "caja vacia", "caja vacía", "tin vacia"])
+    q18 = not lot_or_fake_desc
 
     # 19. Single card not bulk lot
     ptype = str(getattr(wallapop_info, "product_type", "") or "").lower()
-    is_lot = any(w in w_full for w in ["lote ", "pack de ", "caja vacia", "caja vacía", "tin vacia"])
-    q19 = not is_lot if ptype in ("single_card", "card", "carta", "") else True
+    is_lot = any(w in w_full for w in ["lote ", "pack de ", "caja vacia", "caja vacía", "tin vacia", "50 cartas", "100 cartas"])
+    q19 = not is_lot if ptype in ("single_card", "card", "carta", "") else False
 
-    # 20. Overall verdict: requires name, number, set consistency, no contradictory pokemon, and single card
-    q20 = bool(q01 and q05 and q08 and q16 and q19)
+    # Check for direct contradictions (e.g. HP mismatch or collector number mismatch in fractions)
+    hp_conflict = bool(t_hp and q_hp and t_hp != q_hp)
+    num_conflict = False
+    if t_local_id and (q_fracs or re.findall(r"\b\d{1,3}/\d{2,3}\b", q_full)):
+        if not q05:
+            num_conflict = True
+
+    # 20. Overall verdict: requires name, single card, no contradictory pokemon, no explicit conflicts, and reasonable evidence
+    if clean_t_name:
+        evidence_count = sum([q01, q02, q03, q05, q08, q09])
+        q20 = bool(q01 and q16 and q19 and q18 and not hp_conflict and not num_conflict and evidence_count >= 2)
+    else:
+        q20 = bool(q01 and q16 and q19 and q18 and not hp_conflict and not num_conflict)
 
     return {
         "q01_pokemon_name_match": q01,
@@ -514,15 +644,27 @@ Output strictly the 20 answers as comma-separated digits (0 or 1), in exact orde
 
     def verify_match(
         self,
-        offer: Any,
+        offer: Any = None,
         query_ocr: Optional[Union[Dict[str, Any], str]] = None,
         candidate_ocr: Optional[Union[Dict[str, Any], str]] = None,
         tcgdex_card: Optional[Dict[str, Any]] = None,
+        offer_info: Any = None,
+        tcgdex_info: Optional[Dict[str, Any]] = None,
+        target_ocr: Optional[Union[Dict[str, Any], str]] = None,
+        **kwargs,
     ) -> LLMVerificationResult:
         """Runs the 20 verification questions using the local LLM and returns the confidence score."""
         import time
 
         t_start = time.perf_counter()
+
+        # Resolve parameter aliases
+        if offer is None and offer_info is not None:
+            offer = offer_info
+        if tcgdex_card is None and tcgdex_info is not None:
+            tcgdex_card = tcgdex_info
+        if candidate_ocr is None and target_ocr is not None:
+            candidate_ocr = target_ocr
 
         # Resolve query_ocr if missing
         if query_ocr is None:
@@ -624,6 +766,21 @@ Output strictly the 20 answers as comma-separated digits (0 or 1), in exact orde
         except Exception as exc:
             logger.warning(f"Error during LLM verification inference: {exc}")
 
+        # Check if LLM output gave valid per-question answers (e.g. from mock in unit tests or capable LLM)
+        has_valid_llm = False
+        if len(int_answers) == 20:
+            # Check if this is the 0.5B model collapse pattern (where only the first is 1 and all others 0)
+            if int_answers[0] == 1 and sum(int_answers[1:]) == 0:
+                has_valid_llm = False
+            else:
+                has_valid_llm = True
+        elif len(int_answers) > 20:
+            int_answers = int_answers[:20]
+            if int_answers[0] == 1 and sum(int_answers[1:]) == 0:
+                has_valid_llm = False
+            else:
+                has_valid_llm = True
+
         # Compute factual checks from OCR and card data
         factual_checks = compute_factual_checks(
             query_ocr=query_ocr,
@@ -632,20 +789,19 @@ Output strictly the 20 answers as comma-separated digits (0 or 1), in exact orde
             tcgdex_info=tcgdex_card or {"tcgdex_id": getattr(offer, "tcgdex_id", "")},
         )
 
+        # Check semantic rejection in LLM raw output text
+        clean_raw = raw_output.lower()
+        if "verdict: no" in clean_raw or "match: no" in clean_raw or "is_match: no" in clean_raw or "proxy" in clean_raw or "replica" in clean_raw:
+            factual_checks["q20_overall_verdict_genuine_match"] = False
+
         checks: Dict[str, bool] = {}
         detail_list: List[QuestionCheck] = []
         confirmed_count = 0
-
-        # LLM output is valid if it produced 20 answers
-        has_valid_llm = len(int_answers) == 20
 
         for idx, (qid, q_en, q_es, is_veto) in enumerate(VERIFICATION_QUESTIONS):
             fact_ok = factual_checks.get(qid, True)
             if has_valid_llm:
                 llm_ok = bool(int_answers[idx] == 1)
-                # Both factual heuristics and LLM evaluation must agree
-                # If deterministic factual check fails, it cannot be confirmed.
-                # If LLM rejects the question (llm_ok=False), it is not confirmed.
                 is_confirmed = fact_ok and llm_ok
             else:
                 is_confirmed = fact_ok
