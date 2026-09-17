@@ -111,6 +111,11 @@ class PlatformOffers(SQLModel, table=True):
         index=True,
         description="Marketplace platform ('wallapop', 'vinted')",
     )
+    game: str = Field(
+        default="pokemon",
+        index=True,
+        description="Game identifier ('pokemon', 'magic')",
+    )
     location: Optional[str] = Field(default=None, description="City/locality of seller")
     country: Optional[str] = Field(default=None, description="Country or state code")
     description: Optional[str] = Field(default=None, description="Full item description")

@@ -251,9 +251,18 @@ def enrich_magic_offers_in_db(
     eng = engine or get_engine()
     cli = client or _default_client
 
+    from sqlmodel import or_
+
     with Session(eng) as session:
         statement = select(PlatformOffers).where(
-            PlatformOffers.assigned_state == "pending"
+            PlatformOffers.assigned_state == "pending",
+            PlatformOffers.product_type == "single_card",
+            or_(
+                PlatformOffers.game == "magic",
+                PlatformOffers.title.ilike("%magic%"),
+                PlatformOffers.title.ilike("%mtg%"),
+                PlatformOffers.search_profile_id.ilike("%magic%"),
+            ),
         )
         if limit is not None:
             statement = statement.limit(limit)

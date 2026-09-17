@@ -163,6 +163,7 @@ def test_enrich_magic_offers_in_db():
                 price=30.0,
                 product_type="single_card",
                 platform="wallapop",
+                game="magic",
                 link="https://es.wallapop.com/item/deal",
                 assigned_state="pending",
                 alert_status="none",

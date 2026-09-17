@@ -9,6 +9,7 @@ from .service import (
     evaluate_alert_condition,
     format_product_type,
     send_discord_webhook,
+    is_magic_offer,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "evaluate_alert_condition",
     "format_product_type",
     "send_discord_webhook",
+    "is_magic_offer",
 ]

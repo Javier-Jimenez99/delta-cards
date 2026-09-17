@@ -409,3 +409,44 @@ def test_send_discord_webhook_delay_between_offers():
         assert mock_sleep.call_count == 2
         mock_sleep.assert_called_with(2.5)
 
+
+def test_discord_alert_service_routes_by_game():
+    """Verify that Pokémon and Magic deals are routed to their respective webhooks."""
+    settings = Settings(
+        _env_file=None,
+        pokemon_cards_webhook="https://discord.com/api/webhooks/pokemon",
+        magic_cards_webhook="https://discord.com/api/webhooks/magic",
+        discord_alerts_enabled=True,
+        alert_min_saving_percentage=20.0,
+        alert_min_saving_absolute=5.0,
+    )
+    service = DiscordAlertService(settings=settings)
+
+    pokemon_deal = OfferListing(
+        id="poke_1",
+        title="Charizard VMAX",
+        price=50.0,
+        product_type="single_card",
+        game="pokemon",
+        link="https://wallapop.com/item/charizard",
+        cardmarket_low_price=100.0,
+    )
+    magic_deal = OfferListing(
+        id="magic_1",
+        title="Black Lotus",
+        price=500.0,
+        product_type="single_card",
+        game="magic",
+        link="https://wallapop.com/item/lotus",
+        cardmarket_low_price=1000.0,
+    )
+
+    with patch("delta_cards.alerts.service.send_discord_webhook", return_value=True) as mock_send:
+        sent_count = service.process_and_alert_offers([pokemon_deal, magic_deal])
+        assert sent_count == 2
+        calls = mock_send.call_args_list
+        urls = [call.kwargs.get("webhook_url") or (call.args[0] if call.args else None) for call in calls]
+        assert "https://discord.com/api/webhooks/pokemon" in urls
+        assert "https://discord.com/api/webhooks/magic" in urls
+
+

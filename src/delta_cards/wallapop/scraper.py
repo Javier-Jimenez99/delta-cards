@@ -34,6 +34,7 @@ def raw_to_offer_listing(
     raw: Dict[str, Any],
     profile_id: str,
     product_type: str,
+    game: str = "pokemon",
 ) -> OfferListing:
     """Converts a raw WallaPy result dictionary into a clean OfferListing model."""
     creation_date = raw.get("creation_date_utc")
@@ -64,6 +65,8 @@ def raw_to_offer_listing(
         price=float(raw.get("price") or 0.0),
         currency=str(raw.get("currency") or "EUR"),
         product_type=product_type,
+        platform="wallapop",
+        game=game,
         location=raw.get("location"),
         country=raw.get("state"),
         description=raw.get("description"),
@@ -174,6 +177,7 @@ class CardOffersScraper:
                         raw=item,
                         profile_id=profile.id,
                         product_type=profile.product_type,
+                        game=getattr(self.config, "game", "pokemon") or "pokemon",
                     )
                     all_offers[item_id] = offer
                     profile_new_valid += 1

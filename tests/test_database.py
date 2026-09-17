@@ -369,19 +369,21 @@ def test_enrich_card_offers_in_db_marks_states(monkeypatch):
     engine = create_engine("sqlite:///:memory:")
     init_db(engine)
 
-    # 1. Insert 3 pending offers:
+    # 1. Insert pending offers:
     # - card_match: matches a card with Cardmarket product
     # - card_no_match: recognition fails
-    # - sealed_pack: non-single-card offer in pending
+    # - non_card_lot: single_card category but identified as bulk lot -> not_assigned
+    # - sealed_box: different product_type awaiting future pipeline -> untouched ('pending')
     o1 = OfferListing(id="o1", title="Charizard Base Set", price=100.0, product_type="single_card", link="https://1")
     o2 = OfferListing(id="o2", title="Random Unknown Card", price=5.0, product_type="single_card", link="https://2")
-    o3 = OfferListing(id="o3", title="Booster Pack 151", price=8.0, product_type="booster_pack", link="https://3")
-    save_offers_to_db([o1, o2, o3], engine=engine)
+    o3 = OfferListing(id="o3", title="Lote 50 cartas pokemon", price=8.0, product_type="single_card", link="https://3")
+    o4 = OfferListing(id="o4", title="Pokemon Booster Box", price=150.0, product_type="booster_box", link="https://4")
+    save_offers_to_db([o1, o2, o3, o4], engine=engine)
 
-    # Verify all 3 start as pending
+    # Verify all start as pending
     with Session(engine) as s:
         pending = s.exec(select(WallapopOffers).where(WallapopOffers.assigned_state == "pending")).all()
-        assert len(pending) == 3
+        assert len(pending) == 4
 
     # Mock pipeline: o1 matches, o2 fails
     class MockPipeline:
@@ -409,7 +411,7 @@ def test_enrich_card_offers_in_db_marks_states(monkeypatch):
         db_o3 = s.exec(select(WallapopOffers).where(WallapopOffers.id == "o3")).first()
         assert db_o3.assigned_state == "not_assigned"
 
-        # No pending rows remain!
-        pending_after = s.exec(select(WallapopOffers).where(WallapopOffers.assigned_state == "pending")).all()
-        assert len(pending_after) == 0
+        # Sealed products await future product pipelines, so untouched
+        db_o4 = s.exec(select(WallapopOffers).where(WallapopOffers.id == "o4")).first()
+        assert db_o4.assigned_state == "pending"
 

@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "Magic Cards Search Config",
   "description": "Configuration for searching and scraping Magic: The Gathering singles and cards on Wallapop and Vinted",
+  "game": "magic",
   "wallapop_settings": {
     "latitude": 40.4168,
     "longitude": -3.7038,
