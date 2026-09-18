@@ -30,6 +30,13 @@ METADATA_TAGS: Set[str] = {
     "German",
     "French",
     "Italian",
+    "Simplified Chinese",
+    "Traditional Chinese",
+}
+
+# Tags identifying non-sealed listings (single cards, bulk lots, empty boxes, merch)
+EXCLUSION_TAGS: Set[str] = {
+    "Excluded_NonSealed",
 }
 
 # Category constraints: maps format entity to Cardmarket categoryName
@@ -178,13 +185,36 @@ class NonSinglesMatcher:
         raw_entities = self.extractor.extract_keywords(title)
         unique_entities = list(dict.fromkeys(raw_entities))
 
+        # 1. Immediately reject listings with explicit non-sealed indicators
+        if any(e in EXCLUSION_TAGS for e in unique_entities):
+            logger.debug(
+                "Listing '%s' rejected due to non-sealed exclusion tags: %s",
+                title,
+                unique_entities,
+            )
+            return unique_entities, []
+
         # Filter out metadata tags (e.g. language/condition) for title matching
-        product_entities = [e for e in unique_entities if e not in METADATA_TAGS]
+        product_entities = [
+            e for e in unique_entities if e not in METADATA_TAGS and e not in EXCLUSION_TAGS
+        ]
         if not product_entities:
             return unique_entities, []
 
         # Check if a product format constraint exists (e.g. Booster Box, ETB, Tin)
         detected_formats = [e for e in product_entities if e in FORMAT_TO_CATEGORIES]
+        non_format_entities = [e for e in product_entities if e not in FORMAT_TO_CATEGORIES]
+
+        # 2. Guard: If only a generic format was detected without any specific expansion/set/character,
+        # skip blind matching to prevent false positive defaults (e.g. 151 Bundle, Celebrations ETB)
+        if detected_formats and not non_format_entities:
+            logger.debug(
+                "Listing '%s' has format %s but no expansion/set entity; skipping match.",
+                title,
+                detected_formats,
+            )
+            return unique_entities, []
+
         allowed_categories: Set[str] = set()
         for fmt in detected_formats:
             allowed_categories.update(FORMAT_TO_CATEGORIES[fmt])

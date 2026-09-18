@@ -43,8 +43,8 @@ def test_matcher_booster_box():
 def test_matcher_etb():
     """Verify ETB listing matches elite trainer box category."""
     matcher = NonSinglesMatcher.get_instance()
-    ents, matches = matcher.search_product("Caja Entrenador Élite Pokémon Fuegos Fantasmales", top_k=1)
-    assert matches, "Expected a match for Fuegos Fantasmales ETB"
+    ents, matches = matcher.search_product("Caja Entrenador Élite Pokémon Fuerzas Fantasmales", top_k=1)
+    assert matches, "Expected a match for Fuerzas Fantasmales ETB"
     assert "Phantom Forces Elite Trainer Box" in matches[0]["name"]
     assert matches[0]["categoryName"] == "Pokémon Elite Trainer Boxes"
 
@@ -63,6 +63,61 @@ def test_matcher_ambiguous_no_match():
     matcher = NonSinglesMatcher.get_instance()
     ents, matches = matcher.search_product("Sobre Pokémon Venusaur Nuevo", top_k=1)
     assert not matches, "Ambiguous Venusaur booster pack should return no match to prevent false positives"
+
+
+def test_matcher_non_sealed_exclusions():
+    """Verify non-sealed listings (single cards, empty boxes, lots) are safely rejected."""
+    matcher = NonSinglesMatcher.get_instance()
+    excluded_titles = [
+        "Carta #Pokemon #Zorua di N SVP 189 - Promo ETB Avventure Insieme ITA Sealed NM Prezzo Cadauno",
+        "Promo upc 151 sealed e scatola con accessori ita",
+        "Lot de 9 Carte Pokémon Ex",
+        "Lote Pokémon Fuegos Fantasmales + Promo Charcadet Sellada + Taco Cartas + ETB Accesorios",
+        "Pack Marco Expositor Pokemon TCG Pikachu VMAX Chino Simplificado Precintado",
+        "Caja y sobres sueltos Violet Ex TCG Japonés precintada Pokémon auténticas",
+    ]
+    for title in excluded_titles:
+        ents, matches = matcher.search_product(title, top_k=1)
+        assert not matches, f"Listing '{title}' should have been rejected as non-sealed, but matched: {matches}"
+
+
+def test_matcher_format_only_without_expansion_skipped():
+    """Verify generic format-only listings without expansion do not trigger blind expensive defaults."""
+    matcher = NonSinglesMatcher.get_instance()
+    format_only_titles = [
+        "ETB Pokemon Sealed",
+        "Pokemon Booster Bundle Sealed",
+        "Booster Box Pokémon Sellada",
+    ]
+    for title in format_only_titles:
+        ents, matches = matcher.search_product(title, top_k=1)
+        assert not matches, f"Format-only title '{title}' should not blindly match a specific product, but matched: {matches}"
+
+
+def test_matcher_multilingual_modern_sets():
+    """Verify modern Italian and Spanish set names are recognized correctly."""
+    matcher = NonSinglesMatcher.get_instance()
+
+    # Surging Sparks (Italian: Scintille Folgoranti)
+    ents, matches = matcher.search_product("Pokémon Scintille Folgoranti Booster Bundle 6 Buste ITA Box Sealed Neuf", top_k=1)
+    assert matches, "Expected match for Scintille Folgoranti Booster Bundle"
+    assert "Surging Sparks" in matches[0]["name"]
+
+    # White Flare ETB
+    ents, matches = matcher.search_product("Pokémon White Flare ETB", top_k=1)
+    assert matches, "Expected match for White Flare ETB"
+    assert "White Flare Elite Trainer Box" in matches[0]["name"]
+
+    # 30th Anniversary Italian ETB
+    ents, matches = matcher.search_product("ETB 30 Anniversario Pokèmon ITA Sealed", top_k=1)
+    assert matches, "Expected match for 30th Celebration ETB"
+    assert "30th Celebration Elite Trainer Box" in matches[0]["name"]
+
+    # Collection Box should NOT match Booster Box
+    ents, matches = matcher.search_product("Caja pokemon greninja ex 30 aniversario sellada.", top_k=1)
+    assert matches, "Expected match for Greninja ex collection box"
+    assert "Greninja ex Box" in matches[0]["name"]
+    assert matches[0]["categoryName"] == "Pokémon Box Set"
 
 
 def test_assign_nonsingles_to_offers():
