@@ -10,6 +10,12 @@ from .service import (
     format_product_type,
     send_discord_webhook,
     is_magic_offer,
+    extract_alert_header,
+)
+from .templates import (
+    AlertTemplateManager,
+    render_alert_text,
+    resolve_channel_key,
 )
 
 __all__ = [
@@ -22,4 +28,8 @@ __all__ = [
     "format_product_type",
     "send_discord_webhook",
     "is_magic_offer",
+    "extract_alert_header",
+    "AlertTemplateManager",
+    "render_alert_text",
+    "resolve_channel_key",
 ]

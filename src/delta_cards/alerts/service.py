@@ -1,6 +1,8 @@
 """Discord alerting service and condition evaluation for card deals."""
 
 import logging
+from pathlib import Path
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -9,6 +11,7 @@ from pydantic import BaseModel
 
 from ..models import OfferListing, is_card_offer
 from ..settings import Settings, get_settings
+from .templates import render_alert_text, resolve_channel_key
 
 logger = logging.getLogger("delta_cards.alerts")
 
@@ -172,19 +175,145 @@ def is_magic_offer(offer: Any) -> bool:
     return False
 
 
+def extract_alert_header(rendered_text: Optional[str]) -> str:
+    """Extracts the header line from rendered alert text to display outside the green embed."""
+    if not rendered_text:
+        return DEFAULT_OFFER_ALERT_MESSAGE
+    lines = [l.strip() for l in rendered_text.strip().split("\n") if l.strip()]
+    field_pattern = re.compile(r"^(.*?)\*\*(.*?):\*\*\s*(.*)$")
+    header_lines = []
+    for line in lines:
+        if re.match(r"^\*{0,2}\[?Oferta:.*", line) or field_pattern.match(line):
+            break
+        header_lines.append(line)
+    return "\n".join(header_lines) if header_lines else DEFAULT_OFFER_ALERT_MESSAGE
+
+
 def build_discord_embed(
     offer: OfferListing,
     result: AlertConditionResult,
     llm_verification: Optional[Any] = None,
+    description: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Formats a deal offer into a Discord embed object.
 
-    Structure:
-    Deal: [title]
-    Wallapop price - Market Price of average seller - Market price of low price seller
-    Type (Carta, Paquete, Caja, etc.) - Location
-    Links to wallapop offer and to cardmarket product page.
+    If `description` is provided, parses fields into 3-column inline format
+    inside the Discord embed's green block, leaving the header to be rendered outside.
+    Otherwise, builds the default embed structure with fields.
     """
+    if description:
+        # Determine platform URL
+        is_vinted = (getattr(offer, "platform", None) == "vinted") or ("vinted" in (offer.link or "").lower())
+        if is_vinted:
+            offer_url = offer.link or ""
+            platform_name = "Vinted"
+            platform_emoji = "<:vinted:1549420019518013470>"
+            offer_link_text = "Oferta en Vinted"
+        else:
+            offer_url = (offer.link or "").replace("https://wallapop.com/", "https://es.wallapop.com/")
+            platform_name = "Wallapop"
+            platform_emoji = "<:wallapop:1548103689477038080>"
+            offer_link_text = "Oferta en Wallapop"
+
+        lines = [l.strip() for l in description.strip().split("\n") if l.strip()]
+        header_lines = []
+        parsed_fields = []
+        field_pattern = re.compile(r"^(.*?)\*\*(.*?):\*\*\s*(.*)$")
+
+        for idx, line in enumerate(lines):
+            # First line is typically the header (e.g. wild offer greeting)
+            if idx == 0 and not field_pattern.match(line) and not line.startswith("**[Oferta:"):
+                header_lines.append(line)
+                continue
+            # Skip title line from template since it is rendered via embed["title"] and embed["url"]
+            if re.match(r"^\*{0,2}\[?Oferta:.*", line):
+                continue
+            m = field_pattern.match(line)
+            if m:
+                prefix, name, val = m.groups()
+                full_name = f"{prefix.strip()} {name.strip()}".strip()
+                val_clean = val.strip()
+                if not val_clean.startswith("**") and not val_clean.startswith("["):
+                    val_clean = f"**{val_clean}**"
+                parsed_fields.append({"name": full_name, "value": val_clean, "inline": True})
+            else:
+                header_lines.append(line)
+
+        # Fallback fields if no structured fields were parsed from template
+        if not parsed_fields:
+            cardmarket_url = offer.cardmarket_url
+            if not cardmarket_url and offer.cardmarket_product_id:
+                game_category = "Magic" if is_magic_offer(offer) else "Pokemon"
+                cardmarket_url = f"https://www.cardmarket.com/es/{game_category}/Products?idProduct={offer.cardmarket_product_id}"
+
+            avg_price = getattr(offer, "cardmarket_avg_price", None)
+            if avg_price is None:
+                avg_price = result.market_price if result else getattr(offer, "cardmarket_low_price", None)
+            low_price = getattr(offer, "cardmarket_low_price", None)
+
+            avg_str = f"{avg_price:.2f} €" if avg_price is not None else "N/A"
+            low_str = f"{low_price:.2f} €" if low_price is not None else "N/A"
+            type_label = format_product_type(offer.product_type)
+            location_str = offer.location or "N/A"
+
+            links = [f"[{offer_link_text}]({offer_url})"]
+            if cardmarket_url:
+                links.append(f"[Producto en Cardmarket]({cardmarket_url})")
+            links_str = " • ".join(links)
+
+            parsed_fields = [
+                {"name": f"{platform_emoji} {platform_name}", "value": f"**{offer.price:.2f} €**", "inline": True},
+                {"name": "<:cardmarket:1548103777750487056> Precio medio", "value": f"**{avg_str}**", "inline": True},
+                {"name": "<:cardmarket:1548103777750487056> Precio mínimo", "value": f"**{low_str}**", "inline": True},
+                {"name": "📦 Tipo", "value": f"**{type_label}**", "inline": True},
+                {"name": "📍 Ubicación", "value": f"**{location_str}**", "inline": True},
+                {"name": "🔗 Enlaces", "value": links_str, "inline": True},
+            ]
+
+        if llm_verification:
+            score = getattr(llm_verification, "confidence_score", None)
+            if score is None and isinstance(llm_verification, dict):
+                score = llm_verification.get("confidence_score")
+            confirmed = getattr(llm_verification, "confirmed_count", None)
+            if confirmed is None and isinstance(llm_verification, dict):
+                confirmed = llm_verification.get("confirmed_count")
+            total = getattr(llm_verification, "total_questions", 20)
+            if total is None and isinstance(llm_verification, dict):
+                total = llm_verification.get("total_questions", 20)
+
+            if confirmed is not None and total and total > 0:
+                pass_pct = (confirmed / total) * 100.0
+            elif score is not None:
+                pass_pct = float(score)
+            else:
+                pass_pct = 0.0
+
+            if pass_pct >= 67.0:
+                value_msg = f"**{round(pass_pct)}%** ✅"
+            elif pass_pct <= 33.0:
+                value_msg = f"**{round(pass_pct)}%** ❌"
+            else:
+                value_msg = f"**{round(pass_pct)}%** ⚠️"
+
+            parsed_fields.append({
+                "name": "🤖 Verificación IA",
+                "value": value_msg,
+                "inline": True,
+            })
+
+        embed: Dict[str, Any] = {
+            "title": f"Oferta: {offer.title[:200]}",
+            "url": offer_url,
+            "color": 0x2ECC71,  # Emerald Green
+            "fields": parsed_fields,
+            "footer": {"text": "Alerta de ofertas Delta Cards"},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        if offer.image_url:
+            embed["thumbnail"] = {"url": offer.image_url}
+
+        return embed
+
     # Determine platform
     is_vinted = (getattr(offer, "platform", None) == "vinted") or ("vinted" in (offer.link or "").lower())
 
@@ -302,7 +431,7 @@ DEFAULT_MAGIC_OFFER_ALERT_MESSAGE: str = "🔮 ¡Ha aparecido una oferta salvaje
 def send_discord_webhook(
     webhook_url: str,
     embeds: List[Dict[str, Any]],
-    content: Optional[str] = DEFAULT_OFFER_ALERT_MESSAGE,
+    content: Optional[Union[str, List[str]]] = DEFAULT_OFFER_ALERT_MESSAGE,
     timeout: float = 10.0,
     delay_between_offers: float = 0.0,
 ) -> bool:
@@ -311,7 +440,7 @@ def send_discord_webhook(
     Args:
         webhook_url: The Discord webhook endpoint URL.
         embeds: List of embed dictionaries to send.
-        content: Message text displayed before each offer embed.
+        content: Message text (or list of texts per embed) displayed before each offer embed.
         timeout: HTTP request timeout in seconds.
         delay_between_offers: Delay in seconds to pause between consecutive offer alerts (default: 0.0).
 
@@ -338,8 +467,13 @@ def send_discord_webhook(
             "username": "Delta Cards Alert",
             "embeds": [embed],
         }
-        if content:
-            payload["content"] = content
+        if isinstance(content, list):
+            item_msg = content[idx] if idx < len(content) else None
+        else:
+            item_msg = content
+
+        if item_msg:
+            payload["content"] = item_msg
 
         try:
             with httpx.Client(timeout=timeout) as client:
@@ -396,23 +530,22 @@ class DiscordAlertService:
             logger.info("Discord alerts are disabled in settings (DISCORD_ALERTS_ENABLED=false).")
             return 0
 
-        first_offer = offers[0] if offers else None
-        is_magic = is_magic_offer(first_offer) if first_offer else False
-
-        webhook_url = self.webhook_url
-        if not webhook_url:
-            if is_magic:
-                webhook_url = self.settings.magic_cards_webhook or self.settings.discord_webhook_url or self.settings.pokemon_cards_webhook
-            else:
-                webhook_url = self.settings.pokemon_cards_webhook or self.settings.discord_webhook_url or self.settings.magic_cards_webhook
-
-        if not webhook_url:
+        has_any_webhook = bool(
+            self.webhook_url
+            or self.settings.discord_webhook_url
+            or self.settings.pokemon_cards_webhook
+            or self.settings.pokemon_booster_webhook
+            or self.settings.pokemon_booster_box_webhook
+            or self.settings.magic_cards_webhook
+            or self.settings.magic_sealed_webhook
+        )
+        if not has_any_webhook:
             logger.debug(
-                "No MAGIC_CARDS_WEBHOOK or POKEMON_CARDS_WEBHOOK configured in settings. Skipping Discord alerts."
+                "No Discord webhooks configured in settings. Skipping Discord alerts."
             )
             return 0
 
-        matching_items = []
+        matching_items: List[Tuple[OfferListing, Dict[str, Any], AlertConditionResult, Any]] = []
         for offer in offers:
             ref_entry = None
             if reference_prices and offer.id in reference_prices:
@@ -422,34 +555,25 @@ class DiscordAlertService:
 
             avg_price = getattr(offer, "cardmarket_avg_price", None)
             low_price = getattr(offer, "cardmarket_low_price", None)
+            trend_price = getattr(offer, "cardmarket_trend_price", None)
 
-            if isinstance(ref_entry, dict):
-                if avg_price is None:
-                    avg_price = ref_entry.get("avg") or ref_entry.get("all")
-                if low_price is None:
-                    low_price = ref_entry.get("low") or ref_entry.get("all")
-            elif isinstance(ref_entry, (int, float)):
-                if avg_price is None:
-                    avg_price = float(ref_entry)
-
-            if avg_price is None:
-                avg_price = low_price
-
-            try:
-                offer.cardmarket_avg_price = avg_price
-                if low_price is not None:
-                    offer.cardmarket_low_price = low_price
-            except Exception:
-                try:
-                    object.__setattr__(offer, "cardmarket_avg_price", avg_price)
-                    if low_price is not None:
-                        object.__setattr__(offer, "cardmarket_low_price", low_price)
-                except Exception:
-                    pass
-
-            market_price = avg_price if avg_price is not None else low_price
-            if market_price is None:
-                continue
+            if isinstance(ref_entry, (int, float)):
+                market_price = float(ref_entry)
+            elif isinstance(ref_entry, dict):
+                market_price = float(
+                    ref_entry.get("avg_price")
+                    or ref_entry.get("low_price")
+                    or ref_entry.get("trend_price")
+                    or 0.0
+                )
+            elif avg_price is not None and avg_price > 0:
+                market_price = float(avg_price)
+            elif low_price is not None and low_price > 0:
+                market_price = float(low_price)
+            elif trend_price is not None and trend_price > 0:
+                market_price = float(trend_price)
+            else:
+                market_price = 0.0
 
             cond = evaluate_alert_condition(
                 offer_price=offer.price,
@@ -490,128 +614,132 @@ class DiscordAlertService:
                     f"Deal detected for '{offer.title[:35]}': {cond.reason}"
                 )
                 embed = build_discord_embed(offer, cond, llm_verification=llm_res)
-                matching_items.append((offer, embed))
+                matching_items.append((offer, embed, cond, llm_res))
 
         if not matching_items:
             logger.debug("No offers met the configured Discord alert conditions.")
             return 0
 
         # Group matching items by game and product category
-        pokemon_card_embeds = []
-        pokemon_booster_embeds = []
-        pokemon_box_embeds = []
-        magic_embeds = []
+        pokemon_card_items: List[Tuple[OfferListing, Dict[str, Any], AlertConditionResult, Any]] = []
+        pokemon_booster_items: List[Tuple[OfferListing, Dict[str, Any], AlertConditionResult, Any]] = []
+        pokemon_box_items: List[Tuple[OfferListing, Dict[str, Any], AlertConditionResult, Any]] = []
+        magic_card_items: List[Tuple[OfferListing, Dict[str, Any], AlertConditionResult, Any]] = []
+        magic_booster_items: List[Tuple[OfferListing, Dict[str, Any], AlertConditionResult, Any]] = []
+        magic_box_items: List[Tuple[OfferListing, Dict[str, Any], AlertConditionResult, Any]] = []
 
-        for off, emb in matching_items:
+        for off, emb, cond, llm_res in matching_items:
+            ch_key = resolve_channel_key(
+                game=getattr(off, "game", None) or ("magic" if is_magic_offer(off) else "pokemon"),
+                product_type=getattr(off, "product_type", None),
+            )
             if (getattr(off, "game", None) == "magic") or is_magic_offer(off):
-                magic_embeds.append(emb)
-            else:
-                pt = str(getattr(off, "product_type", "") or "").lower().strip()
-                if pt in ("booster_pack", "booster", "blister", "pack", "sobre"):
-                    pokemon_booster_embeds.append(emb)
-                elif pt in (
-                    "booster_box",
-                    "display",
-                    "etb",
-                    "elite_trainer_box",
-                    "caja",
-                    "box",
-                    "tin",
-                    "box_set",
-                    "deck",
-                    "bundle",
-                    "booster_bundle",
-                ):
-                    pokemon_box_embeds.append(emb)
+                if ch_key == "magic_boosters":
+                    magic_booster_items.append((off, emb, cond, llm_res))
+                elif ch_key in ("magic_boxes", "magic_sealed"):
+                    magic_box_items.append((off, emb, cond, llm_res))
                 else:
-                    pokemon_card_embeds.append(emb)
+                    magic_card_items.append((off, emb, cond, llm_res))
+            else:
+                if ch_key == "pokemon_boosters":
+                    pokemon_booster_items.append((off, emb, cond, llm_res))
+                elif ch_key == "pokemon_boxes":
+                    pokemon_box_items.append((off, emb, cond, llm_res))
+                else:
+                    pokemon_card_items.append((off, emb, cond, llm_res))
 
-        emoji = (self.settings.alert_wild_offer_emoji or "").strip()
-        pokemon_msg = f"{emoji} ¡Ha aparecido una oferta salvaje!" if emoji else DEFAULT_OFFER_ALERT_MESSAGE
-        if not emoji or emoji == "<:pokeball_light:1548052080357412995>":
-            magic_msg = DEFAULT_MAGIC_OFFER_ALERT_MESSAGE
-        else:
-            magic_msg = f"{emoji} ¡Ha aparecido una oferta salvaje de Magic!"
-
+        templates_dir = Path(self.settings.alert_templates_dir) if hasattr(self.settings, "alert_templates_dir") else None
         total_sent = 0
 
+        def _dispatch_category(items, wh_url, channel_key, label) -> int:
+            if not items:
+                return 0
+            if not wh_url:
+                logger.warning(f"No webhook configured for {label}. Skipping alerts.")
+                return 0
+            logger.info(f"Dispatching {len(items)} {label} alert(s)...")
+            embeds = []
+            content_list = []
+            for off, _, c, llm in items:
+                msg_text = render_alert_text(
+                    offer=off,
+                    result=c,
+                    channel_key=channel_key,
+                    llm_verification=llm,
+                    emoji=self.settings.alert_wild_offer_emoji,
+                    templates_dir=templates_dir,
+                )
+                header = extract_alert_header(msg_text)
+                emb = build_discord_embed(
+                    offer=off,
+                    result=c,
+                    llm_verification=llm,
+                    description=msg_text,
+                )
+                embeds.append(emb)
+                content_list.append(header)
+
+            if send_discord_webhook(
+                webhook_url=wh_url,
+                embeds=embeds,
+                content=content_list,
+                delay_between_offers=self.settings.time_between_offers,
+            ):
+                return len(items)
+            return 0
+
         # 1. Pokémon Single Cards
-        if pokemon_card_embeds:
-            card_wh = (
-                self.webhook_url
-                or self.settings.pokemon_cards_webhook
-                or self.settings.discord_webhook_url
-            )
-            if card_wh:
-                logger.info(f"Dispatching {len(pokemon_card_embeds)} Pokémon Single Card alert(s)...")
-                if send_discord_webhook(
-                    webhook_url=card_wh,
-                    embeds=pokemon_card_embeds,
-                    content=pokemon_msg,
-                    delay_between_offers=self.settings.time_between_offers,
-                ):
-                    total_sent += len(pokemon_card_embeds)
-            else:
-                logger.warning("No POKEMON_CARDS_WEBHOOK configured. Skipping Pokémon card alerts.")
+        card_wh = (
+            self.webhook_url
+            or self.settings.pokemon_cards_webhook
+            or self.settings.discord_webhook_url
+        )
+        total_sent += _dispatch_category(pokemon_card_items, card_wh, "pokemon_cards", "Pokémon Single Card")
 
         # 2. Pokémon Booster / Blister Packs
-        if pokemon_booster_embeds:
-            booster_wh = (
-                self.webhook_url
-                or self.settings.pokemon_booster_webhook
-                or self.settings.pokemon_cards_webhook
-                or self.settings.discord_webhook_url
-            )
-            if booster_wh:
-                logger.info(f"Dispatching {len(pokemon_booster_embeds)} Pokémon Booster Pack alert(s)...")
-                if send_discord_webhook(
-                    webhook_url=booster_wh,
-                    embeds=pokemon_booster_embeds,
-                    content=pokemon_msg,
-                    delay_between_offers=self.settings.time_between_offers,
-                ):
-                    total_sent += len(pokemon_booster_embeds)
-            else:
-                logger.warning("No POKEMON_BOOSTER_WEBHOOK configured. Skipping Pokémon booster alerts.")
+        booster_wh = (
+            self.webhook_url
+            or self.settings.pokemon_booster_webhook
+            or self.settings.pokemon_cards_webhook
+            or self.settings.discord_webhook_url
+        )
+        total_sent += _dispatch_category(pokemon_booster_items, booster_wh, "pokemon_boosters", "Pokémon Booster Pack")
 
         # 3. Pokémon Booster Boxes / Displays / ETBs
-        if pokemon_box_embeds:
-            box_wh = (
-                self.webhook_url
-                or self.settings.pokemon_booster_box_webhook
-                or self.settings.pokemon_cards_webhook
-                or self.settings.discord_webhook_url
-            )
-            if box_wh:
-                logger.info(f"Dispatching {len(pokemon_box_embeds)} Pokémon Booster Box alert(s)...")
-                if send_discord_webhook(
-                    webhook_url=box_wh,
-                    embeds=pokemon_box_embeds,
-                    content=pokemon_msg,
-                    delay_between_offers=self.settings.time_between_offers,
-                ):
-                    total_sent += len(pokemon_box_embeds)
-            else:
-                logger.warning("No POKEMON_BOOSTER_BOX_WEBHOOK configured. Skipping Pokémon box alerts.")
+        box_wh = (
+            self.webhook_url
+            or self.settings.pokemon_booster_box_webhook
+            or self.settings.pokemon_cards_webhook
+            or self.settings.discord_webhook_url
+        )
+        total_sent += _dispatch_category(pokemon_box_items, box_wh, "pokemon_boxes", "Pokémon Booster Box")
 
         # 4. Magic Cards
-        if magic_embeds:
-            mag_webhook = (
-                self.webhook_url
-                or self.settings.magic_cards_webhook
-                or self.settings.discord_webhook_url
-            )
-            if mag_webhook:
-                logger.info(f"Dispatching {len(magic_embeds)} Magic Discord alert(s)...")
-                if send_discord_webhook(
-                    webhook_url=mag_webhook,
-                    embeds=magic_embeds,
-                    content=magic_msg,
-                    delay_between_offers=self.settings.time_between_offers,
-                ):
-                    total_sent += len(magic_embeds)
-            else:
-                logger.warning("No MAGIC_CARDS_WEBHOOK configured. Skipping Magic alerts.")
+        mag_card_wh = (
+            self.webhook_url
+            or self.settings.magic_cards_webhook
+            or self.settings.discord_webhook_url
+        )
+        total_sent += _dispatch_category(magic_card_items, mag_card_wh, "magic_cards", "Magic Card")
+
+        # 5. Magic Booster / Blister Packs
+        mag_booster_wh = (
+            self.webhook_url
+            or self.settings.magic_booster_webhook
+            or self.settings.magic_cards_webhook
+            or self.settings.discord_webhook_url
+        )
+        total_sent += _dispatch_category(magic_booster_items, mag_booster_wh, "magic_boosters", "Magic Booster Pack")
+
+        # 6. Magic Booster Boxes / Displays / Bundles
+        mag_box_wh = (
+            self.webhook_url
+            or self.settings.magic_booster_box_webhook
+            or self.settings.magic_sealed_webhook
+            or self.settings.magic_cards_webhook
+            or self.settings.discord_webhook_url
+        )
+        total_sent += _dispatch_category(magic_box_items, mag_box_wh, "magic_boxes", "Magic Booster Box")
 
         return total_sent
 
@@ -782,21 +910,31 @@ class AlertWorkerService:
                 except Exception as err:
                     logger.warning(f"LLM verification error: {err}. Proceeding with alert.")
 
-            # Construct Discord Embed and Dispatch
-            embed = build_discord_embed(offer_listing, cond, llm_verification=llm_res)
-            emoji = (self.settings.alert_wild_offer_emoji or "").strip()
-            if is_magic:
-                if not emoji or emoji == "<:pokeball_light:1548052080357412995>":
-                    offer_msg = DEFAULT_MAGIC_OFFER_ALERT_MESSAGE
-                else:
-                    offer_msg = f"{emoji} ¡Ha aparecido una oferta salvaje de Magic!"
-            else:
-                offer_msg = f"{emoji} ¡Ha aparecido una oferta salvaje!" if emoji else DEFAULT_OFFER_ALERT_MESSAGE
+            # Render alert text and construct Discord Embed (inside the green block)
+            ch_key = resolve_channel_key(
+                game=getattr(offer_listing, "game", None) or ("magic" if is_magic else "pokemon"),
+                product_type=getattr(offer_listing, "product_type", None),
+            )
+            templates_dir = Path(self.settings.alert_templates_dir) if hasattr(self.settings, "alert_templates_dir") else None
+            offer_msg = render_alert_text(
+                offer=offer_listing,
+                result=cond,
+                channel_key=ch_key,
+                llm_verification=llm_res,
+                emoji=self.settings.alert_wild_offer_emoji,
+                templates_dir=templates_dir,
+            )
+            embed = build_discord_embed(
+                offer_listing,
+                cond,
+                llm_verification=llm_res,
+                description=offer_msg,
+            )
 
             webhook_url = self.webhook_url
             if not webhook_url:
                 if is_magic:
-                    webhook_url = self.settings.get_webhook_url("magic")
+                    webhook_url = self.settings.get_webhook_url("magic", offer.product_type)
                 else:
                     webhook_url = self.settings.get_webhook_url("pokemon", offer.product_type)
 
@@ -806,10 +944,11 @@ class AlertWorkerService:
                 )
                 return None
 
+            header = extract_alert_header(offer_msg)
             ok = send_discord_webhook(
                 webhook_url=webhook_url,
                 embeds=[embed],
-                content=offer_msg,
+                content=header,
                 delay_between_offers=self.settings.time_between_offers,
             )
 

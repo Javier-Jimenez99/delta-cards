@@ -54,7 +54,31 @@ class Settings(BaseSettings):
             "MAGIC_CARDS_WEBHOOK",
             "magic_cards_webhook",
         ),
-        description="Discord incoming webhook URL to post Magic: The Gathering alerts to",
+        description="Discord incoming webhook URL to post Magic: The Gathering single card alerts to",
+    )
+    magic_booster_webhook: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "MAGIC_BOOSTER_WEBHOOK",
+            "magic_booster_webhook",
+        ),
+        description="Discord incoming webhook URL to post Magic: The Gathering booster and blister alerts to",
+    )
+    magic_booster_box_webhook: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "MAGIC_BOOSTER_BOX_WEBHOOK",
+            "magic_booster_box_webhook",
+        ),
+        description="Discord incoming webhook URL to post Magic: The Gathering booster box, display, bundle, and sealed box alerts to",
+    )
+    magic_sealed_webhook: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "MAGIC_SEALED_WEBHOOK",
+            "magic_sealed_webhook",
+        ),
+        description="Legacy alias for Magic sealed product webhook",
     )
     discord_webhook_url: Optional[str] = Field(
         default=None,
@@ -102,6 +126,14 @@ class Settings(BaseSettings):
         default=30,
         description="Interval in seconds between worker queue checks when no deals are pending (default: 30s)",
     )
+    alert_templates_dir: str = Field(
+        default="config/templates/alerts",
+        validation_alias=AliasChoices(
+            "ALERT_TEMPLATES_DIR",
+            "alert_templates_dir",
+        ),
+        description="Path to directory containing alert message templates per channel",
+    )
 
     # Debug Mode: Controls alerting on previously saved database offers
     debug: bool = Field(
@@ -135,9 +167,15 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def resolve_webhooks(self) -> "Settings":
+        if not self.magic_booster_box_webhook and self.magic_sealed_webhook:
+            self.magic_booster_box_webhook = self.magic_sealed_webhook
+        elif not self.magic_sealed_webhook and self.magic_booster_box_webhook:
+            self.magic_sealed_webhook = self.magic_booster_box_webhook
+
         if not self.discord_webhook_url:
             self.discord_webhook_url = (
                 self.magic_cards_webhook
+                or self.magic_booster_box_webhook
                 or self.pokemon_cards_webhook
                 or self.pokemon_booster_box_webhook
                 or self.pokemon_booster_webhook
@@ -151,6 +189,35 @@ class Settings(BaseSettings):
     ) -> Optional[str]:
         """Returns the appropriate Discord webhook URL for the given game and product category."""
         if str(game).lower() in ("magic", "mtg"):
+            pt = str(product_type or "").lower().strip()
+            if pt in ("booster_pack", "booster", "blister", "pack", "sobre"):
+                return (
+                    self.magic_booster_webhook
+                    or self.magic_sealed_webhook
+                    or self.magic_cards_webhook
+                    or self.discord_webhook_url
+                )
+            if pt in (
+                "booster_box",
+                "display",
+                "etb",
+                "elite_trainer_box",
+                "caja",
+                "box",
+                "tin",
+                "box_set",
+                "deck",
+                "bundle",
+                "booster_bundle",
+                "non_single",
+                "sealed",
+            ):
+                return (
+                    self.magic_booster_box_webhook
+                    or self.magic_sealed_webhook
+                    or self.magic_cards_webhook
+                    or self.discord_webhook_url
+                )
             return self.magic_cards_webhook or self.discord_webhook_url or self.pokemon_cards_webhook
 
         pt = str(product_type or "").lower().strip()

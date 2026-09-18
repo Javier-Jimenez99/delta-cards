@@ -1,0 +1,9 @@
+<:pokeball_light:1548052080357412995> ¡Ha aparecido una oferta salvaje!
+**[Oferta: {title}]({url})**
+
+{platform_emoji} **{platform}:** {price}
+<:cardmarket:1548103777750487056> **Precio medio:** {avg_price}
+<:cardmarket:1548103777750487056> **Precio mínimo:** {low_price}
+📦 **Tipo:** {product_type}
+📍 **Ubicación:** {location}
+🔗 **Enlaces:** [Oferta en {platform}]({url}) • [Producto en Cardmarket]({cardmarket_url})

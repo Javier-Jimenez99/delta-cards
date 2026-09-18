@@ -177,15 +177,15 @@ alerts *args="":
 alerts-once:
     uv run delta-cards alerts --once
 
-# Dispatch a test deal alert to Discord (platform: wallapop or vinted)
+# Dispatch test deal alerts to Discord channels (channel: all, pokemon, magic, pokemon_cards, pokemon_boosters, pokemon_boxes, magic_cards, magic_boosters, magic_boxes)
 [group("alerts")]
-test-alert platform="wallapop":
-    #!/usr/bin/env bash
-    if [ "{{platform}}" = "vinted" ]; then
-        uv run delta-cards alerts --test-discord-vinted
-    else
-        uv run delta-cards alerts --test-discord
-    fi
+test-alert channel="all" platform="wallapop" *extra="":
+    uv run python scripts/send_test_alert.py {{channel}} --platform {{platform}} {{extra}}
+
+# Preview rendered alert text and fields on terminal without sending to Discord
+[group("alerts")]
+test-alert-dry channel="all" platform="wallapop":
+    uv run python scripts/send_test_alert.py {{channel}} --platform {{platform}} --dry-run
 
 # ------------------------------------------------------------------------------
 # Full End-to-End Pipeline

@@ -33,18 +33,27 @@ def build_magic_cardmarket_url(id_product: Optional[Any], language: str = "es") 
     return f"https://www.cardmarket.com/{language}/Magic/Products?idProduct={id_product}"
 
 
-def extract_scryfall_cardmarket_prices(card_data: Dict[str, Any], language: str = "es") -> Dict[str, Any]:
+def extract_scryfall_cardmarket_prices(
+    card_data: Dict[str, Any],
+    language: str = "es",
+    is_foil: Optional[bool] = None,
+) -> Dict[str, Any]:
     """Extracts Cardmarket product ID, direct URL, and EUR pricing from Scryfall card data.
 
+    Args:
+        card_data: Scryfall card JSON dictionary.
+        language: Language code for URL building.
+        is_foil: True if listing is foil, False if non-foil, None if unknown.
+
     Returns:
-        Dict with keys: idProduct, url, prices (low, avg, trend, eur, eur_foil),
+        Dict with keys: idProduct, url, prices (low, avg, trend, eur, eur_foil, eur_etched),
         name, set, set_name, collector_number, image_url, raw.
     """
     if not card_data or not isinstance(card_data, dict):
         return {
             "idProduct": None,
             "url": None,
-            "prices": {"low": None, "avg": None, "trend": None, "eur": None, "eur_foil": None},
+            "prices": {"low": None, "avg": None, "trend": None, "eur": None, "eur_foil": None, "eur_etched": None},
             "name": None,
             "set": None,
             "set_name": None,
@@ -62,9 +71,11 @@ def extract_scryfall_cardmarket_prices(card_data: Dict[str, Any], language: str 
     prices_dict = card_data.get("prices") or {}
     eur_str = prices_dict.get("eur")
     eur_foil_str = prices_dict.get("eur_foil")
+    eur_etched_str = prices_dict.get("eur_etched")
 
     eur_val: Optional[float] = None
     eur_foil_val: Optional[float] = None
+    eur_etched_val: Optional[float] = None
 
     if eur_str is not None:
         try:
@@ -78,8 +89,20 @@ def extract_scryfall_cardmarket_prices(card_data: Dict[str, Any], language: str 
         except (ValueError, TypeError):
             eur_foil_val = None
 
-    # Reference market price: primary regular EUR price, fallback to foil EUR price
-    ref_price = eur_val if eur_val is not None else eur_foil_val
+    if eur_etched_str is not None:
+        try:
+            eur_etched_val = float(eur_etched_str)
+        except (ValueError, TypeError):
+            eur_etched_val = None
+
+    # Reference market price based on finish preference:
+    # 1. If explicitly foil: prioritize eur_foil -> eur_etched -> eur
+    # 2. If explicitly non-foil: prioritize eur -> eur_foil -> eur_etched
+    # 3. If unspecified: prioritize eur -> eur_foil -> eur_etched
+    if is_foil is True:
+        ref_price = eur_foil_val if eur_foil_val is not None else (eur_etched_val if eur_etched_val is not None else eur_val)
+    else:
+        ref_price = eur_val if eur_val is not None else (eur_foil_val if eur_foil_val is not None else eur_etched_val)
 
     # Images
     image_uris = card_data.get("image_uris") or {}
@@ -104,6 +127,7 @@ def extract_scryfall_cardmarket_prices(card_data: Dict[str, Any], language: str 
             "trend": ref_price,
             "eur": eur_val,
             "eur_foil": eur_foil_val,
+            "eur_etched": eur_etched_val,
         },
         "name": card_data.get("name"),
         "set": card_data.get("set"),
@@ -120,6 +144,7 @@ class ScryfallClient:
     def __init__(self, user_agent: str = DEFAULT_USER_AGENT, timeout: float = 6.0):
         self.user_agent = user_agent
         self.timeout = timeout
+        self._prints_cache: Dict[Tuple[str, Optional[str]], List[Dict[str, Any]]] = {}
 
     def _get(self, endpoint: str, params: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:
         """Makes an HTTP GET request to Scryfall with rate limiting and error handling."""
@@ -198,6 +223,41 @@ class ScryfallClient:
             return res["data"]
         return []
 
+    def get_card_prints(self, card_name: str, set_code: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Retrieves all available printings of a card from Scryfall with caching.
+
+        Args:
+            card_name: Exact or canonical name of the card.
+            set_code: Optional set code to filter or prioritize printings.
+
+        Returns:
+            List of card printing dictionaries.
+        """
+        if not card_name:
+            return []
+
+        clean_name = card_name.strip()
+        clean_set = set_code.lower().strip() if set_code else None
+        cache_key = (clean_name.lower(), clean_set)
+        if cache_key in self._prints_cache:
+            return self._prints_cache[cache_key]
+
+        results: List[Dict[str, Any]] = []
+        if clean_set:
+            query = f'!\"{clean_name}\" s:{clean_set} unique:prints'
+            results = self.search_cards(query)
+
+        if not results:
+            query = f'!\"{clean_name}\" unique:prints'
+            results = self.search_cards(query)
+
+        if not results:
+            query = f'\"{clean_name}\" unique:prints'
+            results = self.search_cards(query)
+
+        self._prints_cache[cache_key] = results
+        return results
+
 
 _default_client = ScryfallClient()
 
@@ -208,6 +268,7 @@ def fetch_scryfall_card_pricing(
     set_code: Optional[str] = None,
     collector_number: Optional[str] = None,
     language: str = "es",
+    is_foil: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Fetches Cardmarket pricing and product details from Scryfall for a given card.
 
@@ -216,6 +277,7 @@ def fetch_scryfall_card_pricing(
         set_code: Optional set code (e.g. 'mh3', 'ltr').
         collector_number: Optional collector number (e.g. '1', '250').
         language: Language code for URL building.
+        is_foil: Whether the card is foil.
 
     Returns:
         Structured dictionary with idProduct, url, prices, name, set, collector_number.
@@ -239,4 +301,4 @@ def fetch_scryfall_card_pricing(
     if not card_data:
         return {}
 
-    return extract_scryfall_cardmarket_prices(card_data, language=language)
+    return extract_scryfall_cardmarket_prices(card_data, language=language, is_foil=is_foil)

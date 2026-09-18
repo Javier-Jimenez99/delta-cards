@@ -826,12 +826,12 @@ def run_assign(args: argparse.Namespace, config) -> None:
         for r in raw_candidates:
             if is_card_offer(r.product_type, title=r.title, description=r.description):
                 unassigned_cards.append(r)
-            elif (getattr(r, "game", None) or "pokemon").lower() == "pokemon":
+            elif (getattr(r, "game", None) or "pokemon").lower() in ("pokemon", "magic"):
                 unassigned_nonsingles.append(r)
             else:
                 non_card_offers.append(r)
 
-        # 1. Process Sealed / Non-Single Pokémon offers
+        # 1. Process Sealed / Non-Single offers (Pokémon and Magic)
         if unassigned_nonsingles:
             from .nonsingles import assign_nonsingles_to_offers
             console.print(f"\n[bold cyan]Found {len(unassigned_nonsingles)} pending sealed/non-single offer(s) to process.[/bold cyan]")
@@ -877,9 +877,11 @@ def run_assign(args: argparse.Namespace, config) -> None:
 
                         if has_cm:
                             cm_id = offer.cardmarket_product_id
+                            offer_game = (getattr(offer, "game", None) or "pokemon").lower()
+                            game_path = "Magic" if offer_game in ("magic", "mtg") else "Pokemon"
                             cm_url = (
                                 getattr(offer, "cardmarket_url", None)
-                                or f"https://www.cardmarket.com/{offer.language or 'es'}/Pokemon/Products?idProduct={cm_id}"
+                                or f"https://www.cardmarket.com/{offer.language or 'es'}/{game_path}/Products?idProduct={cm_id}"
                             )
                             upsert_cardmarket_product(product_id=cm_id, cardmarket_url=cm_url, session=s)
                             if trend_p is not None or avg_p is not None or low_p is not None:
@@ -1202,7 +1204,7 @@ def run_all(args: argparse.Namespace, config) -> None:
         nonsingle_offers = [
             o for o in offers
             if not is_card_offer(o.product_type, title=o.title, description=o.description)
-            and (getattr(o, "game", None) or "pokemon").lower() == "pokemon"
+            and (getattr(o, "game", None) or "pokemon").lower() in ("pokemon", "magic")
         ]
         nonsingle_assigned_count = 0
         if not getattr(args, "skip_tcgdex", False) and nonsingle_offers:

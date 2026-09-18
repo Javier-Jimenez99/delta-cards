@@ -40,7 +40,7 @@ EXCLUSION_TAGS: Set[str] = {
 }
 
 # Category constraints: maps format entity to Cardmarket categoryName
-FORMAT_TO_CATEGORIES: Dict[str, Set[str]] = {
+POKEMON_FORMAT_TO_CATEGORIES: Dict[str, Set[str]] = {
     "Elite Trainer Box": {"Pokémon Elite Trainer Boxes"},
     "Pokémon Center Elite Trainer Box": {"Pokémon Elite Trainer Boxes"},
     "Booster Box": {"Pokémon Display"},
@@ -74,8 +74,31 @@ FORMAT_TO_CATEGORIES: Dict[str, Set[str]] = {
     "Stacking Tin": {"Pokémon Tins"},
 }
 
+MAGIC_FORMAT_TO_CATEGORIES: Dict[str, Set[str]] = {
+    "Booster Box": {"Magic Display"},
+    "Collector Booster Box": {"Magic Display"},
+    "Play Booster Box": {"Magic Display"},
+    "Draft Booster Box": {"Magic Display"},
+    "Set Booster Box": {"Magic Display"},
+    "Jumpstart Display": {"Magic Display"},
+    "Bundle": {"Magic Fatpack"},
+    "Gift Bundle": {"Magic Fatpack"},
+    "Booster": {"Magic Booster"},
+    "Collector Booster": {"Magic Booster"},
+    "Play Booster": {"Magic Booster"},
+    "Draft Booster": {"Magic Booster"},
+    "Set Booster": {"Magic Booster"},
+    "Commander Deck": {"Magic Intropack", "MtG Set", "Magic Theme Deck Display"},
+    "Prerelease Pack": {"Magic TournamentPack", "Magic Theme Deck Display", "Magic Booster"},
+    "Starter Kit": {"Magic Starter Deck", "Magic Intropack"},
+    "Secret Lair": {"MtG Set", "Magic Booster"},
+}
+
+# Alias for backwards compatibility
+FORMAT_TO_CATEGORIES: Dict[str, Set[str]] = POKEMON_FORMAT_TO_CATEGORIES
+
 # Cardmarket categoryName to normalized product_type identifier
-CATEGORY_TO_PRODUCT_TYPE: Dict[str, str] = {
+POKEMON_CATEGORY_TO_PRODUCT_TYPE: Dict[str, str] = {
     "Pokémon Booster": "booster_pack",
     "Pokémon Blisters": "booster_pack",
     "Pokémon Display": "booster_box",
@@ -85,6 +108,20 @@ CATEGORY_TO_PRODUCT_TYPE: Dict[str, str] = {
     "Pokémon Theme Decks": "deck",
 }
 
+MAGIC_CATEGORY_TO_PRODUCT_TYPE: Dict[str, str] = {
+    "Magic Display": "booster_box",
+    "Magic Booster": "booster_pack",
+    "Magic Fatpack": "bundle",
+    "Magic Intropack": "deck",
+    "Magic Starter Deck": "deck",
+    "Magic TournamentPack": "box_set",
+    "Magic Theme Deck Display": "box_set",
+    "MtG Set": "box_set",
+    "Magic Lot": "bulk",
+}
+
+CATEGORY_TO_PRODUCT_TYPE: Dict[str, str] = POKEMON_CATEGORY_TO_PRODUCT_TYPE
+
 MIN_SCORE_THRESHOLD: float = 6.5
 
 
@@ -93,36 +130,51 @@ def tokenize(text: str) -> List[str]:
     return re.findall(r"\w+", text.lower())
 
 
-def resolve_product_type_from_category(category_name: str) -> str:
+def resolve_product_type_from_category(category_name: str, game: str = "pokemon") -> str:
     """Deterministically maps Cardmarket category to normalized product_type."""
-    return CATEGORY_TO_PRODUCT_TYPE.get(category_name, "sealed")
+    if str(game).lower() in ("magic", "mtg"):
+        return MAGIC_CATEGORY_TO_PRODUCT_TYPE.get(category_name, "sealed")
+    return POKEMON_CATEGORY_TO_PRODUCT_TYPE.get(category_name, "sealed")
 
 
 class NonSinglesMatcher:
     """Extracts domain entities using FlashText and ranks Cardmarket non-single products with BM25."""
 
-    _instance: Optional["NonSinglesMatcher"] = None
+    _instances: Dict[str, "NonSinglesMatcher"] = {}
 
     def __init__(
         self,
+        game: str = "pokemon",
         keywords_path: Optional[Path] = None,
         catalog_path: Optional[Path] = None,
     ):
+        self.game = str(game).lower()
         project_root = Path(__file__).resolve().parent.parent.parent.parent
+
+        game_folder = "magic" if self.game in ("magic", "mtg") else "pokemon"
+        self.format_to_categories = (
+            MAGIC_FORMAT_TO_CATEGORIES if game_folder == "magic" else POKEMON_FORMAT_TO_CATEGORIES
+        )
 
         # Resolve keywords JSON path
         if keywords_path is None:
-            candidate = project_root / "data/catalogs/pokemon_keywords.json"
-            if not candidate.exists():
-                candidate = project_root / "notebooks/data/non-singles/pokemon_keywords.json"
-            keywords_path = candidate
+            candidates = [
+                project_root / f"data/catalogs/{game_folder}/keywords.json",
+                project_root / f"data/catalogs/{game_folder}/{game_folder}_keywords.json",
+                project_root / f"data/catalogs/{game_folder}_keywords.json",
+                project_root / f"notebooks/data/non-singles/{game_folder}_keywords.json",
+            ]
+            keywords_path = next((c for c in candidates if c.exists()), candidates[0])
 
         # Resolve catalog CSV path
         if catalog_path is None:
-            candidate = project_root / "data/catalogs/pokemon_nonsingles.csv"
-            if not candidate.exists():
-                candidate = project_root / "notebooks/data/non-singles/pokemon_nonsingles.csv"
-            catalog_path = candidate
+            candidates = [
+                project_root / f"data/catalogs/{game_folder}/nonsingles.csv",
+                project_root / f"data/catalogs/{game_folder}/{game_folder}_nonsingles.csv",
+                project_root / f"data/catalogs/{game_folder}_nonsingles.csv",
+                project_root / f"notebooks/data/non-singles/{game_folder}_nonsingles.csv",
+            ]
+            catalog_path = next((c for c in candidates if c.exists()), candidates[0])
 
         self.keywords_path = Path(keywords_path)
         self.catalog_path = Path(catalog_path)
@@ -135,7 +187,7 @@ class NonSinglesMatcher:
         if self.keywords_path.exists():
             with open(self.keywords_path, "r", encoding="utf-8") as f:
                 self.extractor.add_keywords_from_dict(json.load(f))
-            logger.info("NonSinglesMatcher loaded keywords from %s", self.keywords_path)
+            logger.info("NonSinglesMatcher (%s) loaded keywords from %s", self.game, self.keywords_path)
         else:
             logger.warning("Keywords JSON not found at %s", self.keywords_path)
 
@@ -146,7 +198,8 @@ class NonSinglesMatcher:
             tokenized_catalog = [tokenize(name) for name in self.catalog_names]
             self.bm25 = BM25Okapi(tokenized_catalog)
             logger.info(
-                "NonSinglesMatcher loaded %d products from %s",
+                "NonSinglesMatcher (%s) loaded %d products from %s",
+                self.game,
                 len(self.df_catalog),
                 self.catalog_path,
             )
@@ -157,11 +210,12 @@ class NonSinglesMatcher:
             self.bm25 = None
 
     @classmethod
-    def get_instance(cls) -> "NonSinglesMatcher":
-        """Returns a singleton instance of NonSinglesMatcher."""
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
+    def get_instance(cls, game: str = "pokemon") -> "NonSinglesMatcher":
+        """Returns a singleton instance of NonSinglesMatcher for the given game."""
+        g = "magic" if str(game).lower() in ("magic", "mtg") else "pokemon"
+        if g not in cls._instances:
+            cls._instances[g] = cls(game=g)
+        return cls._instances[g]
 
     def search_product(
         self,
@@ -201,9 +255,9 @@ class NonSinglesMatcher:
         if not product_entities:
             return unique_entities, []
 
-        # Check if a product format constraint exists (e.g. Booster Box, ETB, Tin)
-        detected_formats = [e for e in product_entities if e in FORMAT_TO_CATEGORIES]
-        non_format_entities = [e for e in product_entities if e not in FORMAT_TO_CATEGORIES]
+        # Check if a product format constraint exists (e.g. Booster Box, ETB, Tin, Bundle)
+        detected_formats = [e for e in product_entities if e in self.format_to_categories]
+        non_format_entities = [e for e in product_entities if e not in self.format_to_categories]
 
         # 2. Guard: If only a generic format was detected without any specific expansion/set/character,
         # skip blind matching to prevent false positive defaults (e.g. 151 Bundle, Celebrations ETB)
@@ -217,7 +271,7 @@ class NonSinglesMatcher:
 
         allowed_categories: Set[str] = set()
         for fmt in detected_formats:
-            allowed_categories.update(FORMAT_TO_CATEGORIES[fmt])
+            allowed_categories.update(self.format_to_categories[fmt])
 
         # Tokenize the query words
         query_tokens = [
@@ -262,17 +316,19 @@ class NonSinglesMatcher:
 def assign_nonsingles_to_offers(
     offers: List[OfferListing],
     matcher: Optional[NonSinglesMatcher] = None,
+    game: Optional[str] = None,
     progress_callback: Optional[Any] = None,
 ) -> List[OfferListing]:
     """Enriches sealed / non-single OfferListing objects with Cardmarket Product ID and prices.
 
     Matches listings using FlashText and BM25. If high confidence match is found,
     updates cardmarket_product_id, cardmarket_trend_price, and determines the
-    concrete product_type (e.g. booster_pack, booster_box, etb) based on the Cardmarket category.
+    concrete product_type (e.g. booster_pack, booster_box, etb, bundle) based on the Cardmarket category.
 
     Args:
         offers: List of OfferListing instances to assign.
         matcher: Optional NonSinglesMatcher instance.
+        game: Default game ('pokemon' or 'magic') if not specified on individual offers.
         progress_callback: Optional callback receiving (index, total, offer).
 
     Returns:
@@ -280,9 +336,6 @@ def assign_nonsingles_to_offers(
     """
     if not offers:
         return []
-
-    if matcher is None:
-        matcher = NonSinglesMatcher.get_instance()
 
     total = len(offers)
     for idx, offer in enumerate(offers, 1):
@@ -292,24 +345,29 @@ def assign_nonsingles_to_offers(
                 progress_callback(idx, total, offer)
             continue
 
-        entities, matches = matcher.search_product(offer.title, top_k=1)
+        offer_game = (getattr(offer, "game", None) or game or "pokemon").lower()
+        active_matcher = matcher or NonSinglesMatcher.get_instance(game=offer_game)
+
+        entities, matches = active_matcher.search_product(offer.title, top_k=1)
         if matches:
             best = matches[0]
             cm_id = str(best["idProduct"])
             category = best["categoryName"]
-            resolved_pt = resolve_product_type_from_category(category)
+            resolved_pt = resolve_product_type_from_category(category, game=offer_game)
 
             offer.cardmarket_product_id = cm_id
             offer.cardmarket_trend_price = best.get("trendPrice")
             offer.cardmarket_low_price = best.get("lowPrice")
             offer.cardmarket_avg_price = best.get("avgPrice")
+            game_url_path = "Magic" if offer_game in ("magic", "mtg") else "Pokemon"
             offer.cardmarket_url = (
-                f"https://www.cardmarket.com/{offer.language or 'es'}/Pokemon/Products?idProduct={cm_id}"
+                f"https://www.cardmarket.com/{offer.language or 'es'}/{game_url_path}/Products?idProduct={cm_id}"
             )
             offer.product_type = resolved_pt
             offer.assigned_state = "assigned"
             logger.debug(
-                "Matched non-single '%s' -> ID %s (%s) [Score: %.2f]",
+                "Matched non-single (%s) '%s' -> ID %s (%s) [Score: %.2f]",
+                offer_game,
                 offer.title,
                 cm_id,
                 best["name"],

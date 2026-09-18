@@ -1,0 +1,9 @@
+<:mtg_logo:1550271985265807440> ¡Ha aparecido una oferta salvaje de Magic!
+**[Oferta: {title}]({url})**
+
+{platform_emoji} **{platform}:** {price}
+<:cardmarket:1548103777750487056> **Precio medio:** {avg_price}
+<:cardmarket:1548103777750487056> **Precio mínimo:** {low_price}
+📦 **Tipo:** {product_type}
+📍 **Ubicación:** {location}
+🔗 **Enlaces:** [Oferta en {platform}]({url}) • [Producto en Cardmarket]({cardmarket_url})
