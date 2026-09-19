@@ -116,6 +116,16 @@ class Settings(BaseSettings):
         ),
         description="Delay in seconds between sending offer alerts to Discord to prevent flooding (default: 0)",
     )
+    bot_name_pokemon: str = Field(
+        default="El Meowth de la suerte",
+        validation_alias=AliasChoices("BOT_NAME_POKEMON", "bot_name_pokemon"),
+        description="Discord bot username for Pokémon alerts",
+    )
+    bot_name_magic: str = Field(
+        default="Ragavan Buscatesoros",
+        validation_alias=AliasChoices("BOT_NAME_MAGIC", "bot_name_magic"),
+        description="Discord bot username for Magic: The Gathering alerts",
+    )
 
     # Alert Service / Worker Settings
     alert_dispatch_interval_minutes: Optional[int] = Field(
@@ -258,6 +268,12 @@ class Settings(BaseSettings):
             or self.pokemon_booster_webhook
             or self.magic_cards_webhook
         )
+
+    def get_bot_username(self, game: Optional[str] = None) -> str:
+        """Returns the bot username for the given game ('magic' -> Ragavan Buscatesoros, other -> El Meowth de la suerte)."""
+        if game and str(game).lower() in ("magic", "mtg"):
+            return self.bot_name_magic
+        return self.bot_name_pokemon
 
     @property
     def alert_interval(self) -> int:

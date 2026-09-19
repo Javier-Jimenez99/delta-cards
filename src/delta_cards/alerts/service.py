@@ -427,6 +427,16 @@ def build_discord_embed(
 DEFAULT_OFFER_ALERT_MESSAGE: str = "<:pokeball_light:1548052080357412995> ¡Ha aparecido una oferta salvaje!"
 DEFAULT_MAGIC_OFFER_ALERT_MESSAGE: str = "🔮 ¡Ha aparecido una oferta salvaje de Magic!"
 
+DEFAULT_BOT_NAME_POKEMON: str = "El Meowth de la suerte"
+DEFAULT_BOT_NAME_MAGIC: str = "Ragavan Buscatesoros"
+
+
+def get_bot_username(game: Optional[str] = None) -> str:
+    """Returns the bot username based on game ('magic' -> 'Ragavan Buscatesoros', other -> 'El Meowth de la suerte')."""
+    if game and str(game).lower() in ("magic", "mtg"):
+        return DEFAULT_BOT_NAME_MAGIC
+    return DEFAULT_BOT_NAME_POKEMON
+
 
 def send_discord_webhook(
     webhook_url: str,
@@ -434,6 +444,7 @@ def send_discord_webhook(
     content: Optional[Union[str, List[str]]] = DEFAULT_OFFER_ALERT_MESSAGE,
     timeout: float = 10.0,
     delay_between_offers: float = 0.0,
+    username: Optional[Union[str, List[str]]] = None,
 ) -> bool:
     """Sends each offer embed as a separate notification message to Discord with alert text.
 
@@ -443,6 +454,7 @@ def send_discord_webhook(
         content: Message text (or list of texts per embed) displayed before each offer embed.
         timeout: HTTP request timeout in seconds.
         delay_between_offers: Delay in seconds to pause between consecutive offer alerts (default: 0.0).
+        username: Bot username displayed in Discord (defaults to 'Delta Cards Alert' if not provided).
 
     Returns:
         True if all embeds were delivered successfully, False otherwise.
@@ -463,8 +475,15 @@ def send_discord_webhook(
             )
             time.sleep(delay_between_offers)
 
+        if isinstance(username, list):
+            bot_user = username[idx] if idx < len(username) else username[0]
+        elif isinstance(username, str) and username.strip():
+            bot_user = username
+        else:
+            bot_user = "Delta Cards Alert"
+
         payload: Dict[str, Any] = {
-            "username": "Delta Cards Alert",
+            "username": bot_user,
             "embeds": [embed],
         }
         if isinstance(content, list):
@@ -679,10 +698,14 @@ class DiscordAlertService:
                 embeds.append(emb)
                 content_list.append(header)
 
+            is_magic = "magic" in channel_key.lower()
+            bot_username = self.settings.get_bot_username("magic" if is_magic else "pokemon")
+
             if send_discord_webhook(
                 webhook_url=wh_url,
                 embeds=embeds,
                 content=content_list,
+                username=bot_username,
                 delay_between_offers=self.settings.time_between_offers,
             ):
                 return len(items)
@@ -945,10 +968,12 @@ class AlertWorkerService:
                 return None
 
             header = extract_alert_header(offer_msg)
+            bot_username = self.settings.get_bot_username(offer_game)
             ok = send_discord_webhook(
                 webhook_url=webhook_url,
                 embeds=[embed],
                 content=header,
+                username=bot_username,
                 delay_between_offers=self.settings.time_between_offers,
             )
 

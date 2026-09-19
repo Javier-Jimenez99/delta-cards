@@ -449,4 +449,43 @@ def test_discord_alert_service_routes_by_game():
         assert "https://discord.com/api/webhooks/pokemon" in urls
         assert "https://discord.com/api/webhooks/magic" in urls
 
+        for call in calls:
+            url = call.kwargs.get("webhook_url") or (call.args[0] if call.args else None)
+            bot_user = call.kwargs.get("username")
+            if url == "https://discord.com/api/webhooks/pokemon":
+                assert bot_user == "El Meowth de la suerte"
+            elif url == "https://discord.com/api/webhooks/magic":
+                assert bot_user == "Ragavan Buscatesoros"
+
+
+def test_send_discord_webhook_usernames():
+    """Verify bot usernames for Pokemon and Magic webhooks."""
+    embeds = [{"title": "Test Deal"}]
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 204
+
+    with patch("httpx.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_resp
+        mock_client_cls.return_value.__enter__.return_value = mock_client
+
+        # 1. Pokemon bot name
+        send_discord_webhook(
+            "https://discord.com/api/webhooks/test",
+            embeds,
+            username="El Meowth de la suerte",
+        )
+        payload = mock_client.post.call_args[1]["json"]
+        assert payload["username"] == "El Meowth de la suerte"
+
+        # 2. Magic bot name
+        send_discord_webhook(
+            "https://discord.com/api/webhooks/test",
+            embeds,
+            username="Ragavan Buscatesoros",
+        )
+        payload = mock_client.post.call_args[1]["json"]
+        assert payload["username"] == "Ragavan Buscatesoros"
+
 

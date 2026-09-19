@@ -317,7 +317,9 @@ def send_channel_test_alert(
     console.print(f"\n[bold cyan]▶ Canal:[/] [bold]{conf['name']}[/] ([dim]{channel_key}[/dim])")
     console.print(f"  • Plataforma: [yellow]{platform.capitalize()}[/yellow]")
     console.print(f"  • Oferta: [green]{offer.title}[/green]")
-    console.print(f"  • Precio: [bold]{offer.price:.2f} €[/bold] (Mercado: {sample_data['market_price']:.2f} € | Descuento: -{cond.savings_percentage:.1f}%)")
+    game = conf.get("game", "pokemon")
+    bot_username = settings.get_bot_username(game)
+    console.print(f"  • Bot: [bold yellow]{bot_username}[/bold yellow]")
 
     if not webhook_url:
         err_console.print(f"  [bold red]✗ Error:[/] No hay webhook configurado en .env para {conf['webhook_attr'].upper()}. Saltando.")
@@ -328,6 +330,7 @@ def send_channel_test_alert(
 
     if dry_run:
         console.print("  [bold magenta]• Modo dry-run activado (no se envía a Discord).[/bold magenta]")
+        console.print(f"  [bold cyan]Bot username:[/bold cyan] {bot_username}")
         console.print(f"  [bold cyan]Cabecera (fuera del bloque verde, encima):[/bold cyan] {header}")
         console.print(f"  [bold cyan]Título (title):[/bold cyan] {embed.get('title')}")
         if embed.get("thumbnail"):
@@ -342,6 +345,7 @@ def send_channel_test_alert(
         webhook_url=webhook_url,
         embeds=[embed],
         content=header,
+        username=bot_username,
         delay_between_offers=0,
     )
 

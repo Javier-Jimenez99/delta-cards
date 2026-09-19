@@ -98,6 +98,7 @@ def test_alert_worker_dispatches_one_and_marks_sent(test_engine, sample_product_
         assert result is not None
         assert result.id == "offer_1"
         assert mock_send.called
+        assert mock_send.call_args.kwargs.get("username") == "El Meowth de la suerte"
         assert mock_verifier.verify_match.called
 
     # Check database status was updated to 'sent'
@@ -270,3 +271,43 @@ def test_save_offers_to_db_preserves_alert_status(test_engine):
         # Must preserve 'sent' and not overwrite back to 'none'!
         assert reloaded.alert_status == "sent"
         assert reloaded.price == 9.0
+
+
+def test_alert_worker_dispatches_magic_bot_name(test_engine, sample_product_and_price):
+    """Verify that Magic deals dispatched by the worker use 'Ragavan Buscatesoros' as username."""
+    now = datetime.now(timezone.utc)
+    with Session(test_engine) as session:
+        magic_offer = WallapopOffers(
+            id="offer_magic_test",
+            title="The One Ring Foil",
+            price=20.0,
+            currency="EUR",
+            product_type="single_card",
+            game="magic",
+            link="https://es.wallapop.com/item/the_one_ring",
+            cardmarket_product_id="12345",
+            language="es",
+            assigned_state="assigned",
+            alert_status="pending",
+            scraped_at=now,
+            updated_at=now,
+        )
+        session.add(magic_offer)
+        session.commit()
+
+    settings = Settings(
+        _env_file=None,
+        magic_cards_webhook="https://discord.com/api/webhooks/magic_test",
+        discord_alerts_enabled=True,
+    )
+
+    worker = AlertWorkerService(engine=test_engine, settings=settings)
+
+    with patch("delta_cards.alerts.service.send_discord_webhook", return_value=True) as mock_send:
+        result = worker.dispatch_one_pending_alert()
+
+        assert result is not None
+        assert result.id == "offer_magic_test"
+        assert mock_send.called
+        assert mock_send.call_args.kwargs.get("username") == "Ragavan Buscatesoros"
+

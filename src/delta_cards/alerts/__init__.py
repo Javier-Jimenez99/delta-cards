@@ -2,6 +2,9 @@
 
 from .service import (
     DEFAULT_OFFER_ALERT_MESSAGE,
+    DEFAULT_BOT_NAME_POKEMON,
+    DEFAULT_BOT_NAME_MAGIC,
+    get_bot_username,
     AlertConditionResult,
     DiscordAlertService,
     AlertWorkerService,
@@ -20,6 +23,9 @@ from .templates import (
 
 __all__ = [
     "DEFAULT_OFFER_ALERT_MESSAGE",
+    "DEFAULT_BOT_NAME_POKEMON",
+    "DEFAULT_BOT_NAME_MAGIC",
+    "get_bot_username",
     "AlertConditionResult",
     "DiscordAlertService",
     "AlertWorkerService",
