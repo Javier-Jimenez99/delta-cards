@@ -6,8 +6,6 @@
     "Booster-Box",
     "Caja de sobres",
     "Caja sobres",
-    "Caja sobre",
-    "Caja",
     "Display",
     "Displays",
     "Display de sobres",
@@ -132,8 +130,14 @@
     "Commander Precon",
     "Deck Commander",
     "Baraja Commander",
+    "Commander"
+  ],
+  "Commander Deck Set": [
     "Commander Decks Set",
-    "Set de Mazos Commander"
+    "Commander Deck Set",
+    "Set de Mazos Commander",
+    "Display de Mazos Commander",
+    "Commander Display"
   ],
   "Prerelease Pack": [
     "Prerelease Pack",
@@ -249,9 +253,22 @@
   "Excluded_NonSealed": [
     "Caja vacía",
     "Caja vacia",
+    "Vacía",
+    "Vacia",
+    "Vacío",
+    "Vacio",
     "Empty box",
     "Empty display",
+    "Empty",
+    "Vuoto",
+    "Vuota",
+    "Scatola",
+    "Scatola vuota",
+    "Solo scatola",
     "Caja sola",
+    "Solo caja",
+    "Boîte vide",
+    "Boite vide",
     "Lote",
     "Lote de cartas",
     "Lote cartas",
@@ -263,6 +280,11 @@
     "Carta suelta",
     "Single",
     "Singles",
+    "100 carte",
+    "Carte magic",
+    "Carte",
+    "Carta",
+    "Cards",
     "Carpeta",
     "Binder",
     "Fundas",
@@ -291,7 +313,34 @@
     "Abierto",
     "Abierta",
     "Open box",
-    "Opened"
+    "Opened",
+    "Without collector booster",
+    "Without booster",
+    "Without boosters",
+    "Without",
+    "Senza buste",
+    "Senza bustina",
+    "Senza bustine",
+    "Land pack",
+    "Landpack",
+    "Gamegenic",
+    "Zip-up",
+    "Pocket",
+    "Pockets",
+    "Deck box",
+    "Deckbox",
+    "Display easel",
+    "Easel",
+    "Art-only",
+    "Art card",
+    "Art cards",
+    "Art series",
+    "One Piece",
+    "Pokemon",
+    "Pokémon",
+    "Yu-Gi-Oh",
+    "Yugioh",
+    "Lorcana"
   ],
   "Modern Horizons 3": [
     "Modern Horizons 3",
@@ -368,6 +417,14 @@
     "LOTR",
     "Tierra Media"
   ],
+  "March of the Machine: The Aftermath": [
+    "March of the Machine: The Aftermath",
+    "March of the Machine The Aftermath",
+    "March of the Machine Aftermath",
+    "The Aftermath",
+    "Aftermath",
+    "MAT"
+  ],
   "March of the Machine": [
     "March of the Machine",
     "MOM",
@@ -377,7 +434,6 @@
   "Phyrexia: All Will Be One": [
     "Phyrexia: All Will Be One",
     "All Will Be One",
-    "ONE",
     "Phyrexia",
     "Pirexia",
     "Todos Serán Uno",
@@ -1203,8 +1259,7 @@
     "MIR"
   ],
   "Alliances": [
-    "Alliances",
-    "ALL"
+    "Alliances"
   ],
   "Homelands": [
     "Homelands",

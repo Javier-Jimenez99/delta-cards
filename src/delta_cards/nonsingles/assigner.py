@@ -88,8 +88,10 @@ MAGIC_FORMAT_TO_CATEGORIES: Dict[str, Set[str]] = {
     "Play Booster": {"Magic Booster"},
     "Draft Booster": {"Magic Booster"},
     "Set Booster": {"Magic Booster"},
-    "Commander Deck": {"Magic Intropack", "MtG Set", "Magic Theme Deck Display"},
-    "Prerelease Pack": {"Magic TournamentPack", "Magic Theme Deck Display", "Magic Booster"},
+    "Commander Deck": {"Magic Intropack"},
+    "Commander Deck Set": {"Magic Theme Deck Display"},
+    "Commander Display": {"Magic Theme Deck Display"},
+    "Prerelease Pack": {"Magic TournamentPack", "Magic Booster"},
     "Starter Kit": {"Magic Starter Deck", "Magic Intropack"},
     "Secret Lair": {"MtG Set", "Magic Booster"},
 }
@@ -259,13 +261,24 @@ class NonSinglesMatcher:
         detected_formats = [e for e in product_entities if e in self.format_to_categories]
         non_format_entities = [e for e in product_entities if e not in self.format_to_categories]
 
-        # 2. Guard: If only a generic format was detected without any specific expansion/set/character,
+        # 2. Guard 1: If only a generic format was detected without any specific expansion/set/character,
         # skip blind matching to prevent false positive defaults (e.g. 151 Bundle, Celebrations ETB)
         if detected_formats and not non_format_entities:
             logger.debug(
                 "Listing '%s' has format %s but no expansion/set entity; skipping match.",
                 title,
                 detected_formats,
+            )
+            return unique_entities, []
+
+        # Guard 2: Sealed non-singles assigner strictly requires a recognized format entity.
+        # Listings without a format entity (e.g. loose cards, accessories, land packs, or set name alone)
+        # must not be blindly assigned to sealed products.
+        if not detected_formats:
+            logger.debug(
+                "Listing '%s' has entities %s but no recognized sealed format; skipping match.",
+                title,
+                non_format_entities,
             )
             return unique_entities, []
 
@@ -279,6 +292,17 @@ class NonSinglesMatcher:
         ]
         if not query_tokens:
             return unique_entities, []
+
+        title_lower = title.lower()
+        has_collector_signal = (
+            any(t in title_lower for t in ["collector", "coleccionista"])
+            or any("collector" in e.lower() for e in unique_entities)
+        )
+        has_bundle_signal = (
+            "bundle" in title_lower
+            or bool(re.search(r"\b6\s+(?:sobres|buste|packs|bustos)\b", title_lower))
+            or any("bundle" in e.lower() for e in unique_entities)
+        )
 
         scores = self.bm25.get_scores(query_tokens)
         top_indices = scores.argsort()[::-1]
@@ -295,11 +319,26 @@ class NonSinglesMatcher:
             if allowed_categories and cat not in allowed_categories:
                 continue
 
+            cand_name = self.catalog_names[idx]
+            cand_name_lower = cand_name.lower()
+
+            # Disambiguation 1: Collector vs Non-Collector in displays/boosters
+            if not has_collector_signal and "collector" in cand_name_lower:
+                continue
+            if has_collector_signal and "collector" not in cand_name_lower:
+                continue
+
+            # Disambiguation 2: Booster Bundle vs 36-pack Booster Box
+            if has_bundle_signal and "booster box" in cand_name_lower and "bundle" not in cand_name_lower:
+                continue
+            if not has_bundle_signal and "bundle" in cand_name_lower and any(b in title_lower for b in ["booster box", "display", "36 sobres", "36 buste"]):
+                continue
+
             row = self.df_catalog.iloc[idx]
             results.append(
                 {
                     "idProduct": int(row["idProduct"]),
-                    "name": self.catalog_names[idx],
+                    "name": cand_name,
                     "categoryName": cat,
                     "trendPrice": float(row["trend"]) if pd.notna(row.get("trend")) else None,
                     "avgPrice": float(row["avg"]) if pd.notna(row.get("avg")) else None,

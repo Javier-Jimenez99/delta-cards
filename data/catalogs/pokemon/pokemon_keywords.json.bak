@@ -17,7 +17,15 @@
     "Caja Entrenador Élite",
     "Caja Entrenador Elite",
     "Caja de Entrenador Élite",
-    "Caja de Entrenador Elite"
+    "Caja de Entrenador Elite",
+    "Set Allenatore Fuoriclasse",
+    "Set Allenatore",
+    "Allenatore Fuoriclasse",
+    "Coffret Dresseur d'Elite",
+    "Coffret Dresseur d’Élite",
+    "Dresseur d'Elite",
+    "Top-Trainer-Box",
+    "Top Trainer Box"
   ],
   "Pokémon Center Elite Trainer Box": [
     "Pokémon Center Elite Trainer Box",
@@ -48,10 +56,9 @@
     "Caja de 30 sobres",
     "Boosterpack Box",
     "BB",
-    "Caja Pokémon",
-    "Caja Pokemon",
-    "Caja de",
-    "Caja"
+    "Display box",
+    "Display de 36 sobres",
+    "Booster display"
   ],
   "Booster Bundle": [
     "Booster Bundle",
@@ -477,7 +484,10 @@
     "Chispas",
     "SSP",
     "SV08",
-    "SV8"
+    "SV8",
+    "Scintille Folgoranti",
+    "Etincelles Déferlantes",
+    "Étincelles Déferlantes"
   ],
   "Prismatic Evolutions": [
     "Prismatic Evolutions",
@@ -488,7 +498,10 @@
     "Prismaticas",
     "PRE",
     "SV08.5",
-    "SV8.5"
+    "SV8.5",
+    "Evoluzioni Prismatiche",
+    "Évolutions Prismatiques",
+    "Evolutions Prismatiques"
   ],
   "Journey Together": [
     "Journey Together",
@@ -498,19 +511,29 @@
     "SV09",
     "SV9",
     "Juntos de Aventuras",
-    "Juntos de Aventura"
+    "Juntos de Aventura",
+    "Avventure Insieme",
+    "Aventures Partagées"
   ],
   "Destined Rivals": [
     "Destined Rivals",
     "Rivales Predestinados",
     "DR",
     "SV10",
-    "SV10"
+    "SV10",
+    "Rivales Predestinado",
+    "Rivali Destinati",
+    "Rivaux Destinés",
+    "Rivaux Destines"
   ],
   "Ascended Heroes": [
     "Ascended Heroes",
     "Héroes Ascendidos",
-    "Heroes Ascendidos"
+    "Heroes Ascendidos",
+    "Ascesa Eroica",
+    "Héroes Ascendentes",
+    "Heroes Ascendentes",
+    "Héros Ascendants"
   ],
   "Terastal Festival": [
     "Terastal Festival",
@@ -836,7 +859,6 @@
   "Lost Thunder": [
     "Lost Thunder",
     "Truenos Perdidos",
-    "LOT",
     "SM08",
     "SM8"
   ],
@@ -924,8 +946,7 @@
     "Phantom Forces",
     "Fuerzas Fantasmales",
     "PHF",
-    "XY04",
-    "Fuegos Fantasmales"
+    "XY04"
   ],
   "Primal Clash": [
     "Primal Clash",
@@ -1752,7 +1773,9 @@
     "Caja ex",
     "Caja de ex",
     "EX Caja",
-    "ex Caja"
+    "ex Caja",
+    "Caja pokemon greninja ex",
+    "Caja greninja ex"
   ],
   "Gift Box": [
     "Gift Box",
@@ -2410,7 +2433,20 @@
     "30 Aniv",
     "30 Aniversario Colección",
     "Celebración 30",
-    "Celebracion 30"
+    "Celebracion 30",
+    "30 Anniversario",
+    "30° Anniversario",
+    "30^ Anniversario",
+    "30TH Anniversario",
+    "30th Anniversario",
+    "30 esimo",
+    "30esimo",
+    "30 Anniversary",
+    "30 jaar",
+    "30e Anniversaire",
+    "Celebracion 30 Aniversario",
+    "Celebración 30 Aniversario",
+    "30th Celebration JP"
   ],
   "25th Anniversary Golden Box": [
     "25th Anniversary Golden Box",
@@ -2439,7 +2475,14 @@
   "Mega Evolution": [
     "Mega Evolución",
     "Mega Evolucion",
-    "Mega Evolution"
+    "Mega Evolution",
+    "Megaevolución",
+    "Megaevolucion",
+    "Mega Evoluzione",
+    "Mega Évolution",
+    "Oscuridad Absoluta",
+    "Megaevolución: Oscuridad Absoluta",
+    "Megaevolución Oscuridad Absoluta"
   ],
   "Mega Charizard X": [
     "Mega Charizard X",
@@ -2502,12 +2545,60 @@
   "Chaos Rising": [
     "Chaos Rising",
     "Caos Creciente",
-    "Ascenso del Caos"
+    "Ascenso del Caos",
+    "Caos Nascente"
   ],
   "Gem Pack Vol. 3": [
     "Gem Pack Vol 3",
     "Gem Pack Vol. 3",
     "Gem Pack 3",
     "CBB3C"
+  ],
+  "White Flare": [
+    "White Flare",
+    "Fiamma Bianca",
+    "Llama Blanca",
+    "Flamme Blanche"
+  ],
+  "Black Bolt": [
+    "Black Bolt",
+    "Luce Nera",
+    "Rayo Negro",
+    "Éclair Noir"
+  ],
+  "Excluded_NonSealed": [
+    "carta",
+    "carte",
+    "cards",
+    "lote de cartas",
+    "lot de cartes",
+    "lotto di carte",
+    "promo",
+    "promos",
+    "scatola con accessori",
+    "scatola vuota",
+    "caja vacia",
+    "caja vacía",
+    "taco cartas",
+    "taco de cartas",
+    "plush toy",
+    "peluche",
+    "peluches",
+    "marco expositor",
+    "teca acrilico",
+    "teca acrilica",
+    "custodia acrilica",
+    "sobres sueltos",
+    "sobres vacios",
+    "sobres vacíos",
+    "bustine vuote",
+    "buste vuote",
+    "solo caja",
+    "solo scatola",
+    "solo fundas",
+    "solo bustine",
+    "etb accesorios",
+    "accesorios etb",
+    "accessori etb"
   ]
 }

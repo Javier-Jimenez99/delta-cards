@@ -456,7 +456,6 @@
     "Mascarada Crepúsculo",
     "Mascarada Crepusculo",
     "TWM",
-    "TM",
     "SV06",
     "SV6"
   ],
@@ -518,8 +517,6 @@
   "Destined Rivals": [
     "Destined Rivals",
     "Rivales Predestinados",
-    "DR",
-    "SV10",
     "SV10",
     "Rivales Predestinado",
     "Rivali Destinati",
@@ -673,7 +670,6 @@
     "Destinos Brillantes",
     "Destinos Brillante",
     "SHF",
-    "SF",
     "SWSH04.5",
     "SWSH4.5"
   ],
@@ -698,7 +694,6 @@
     "Cielos",
     "Evolving",
     "EVS",
-    "ES",
     "SWSH07",
     "SWSH7"
   ],
@@ -730,7 +725,6 @@
     "Astros Brillantes",
     "Astro Brillante",
     "BRS",
-    "BS",
     "SWSH09",
     "SWSH9"
   ],
@@ -1120,8 +1114,7 @@
     "Triumphant",
     "HS—Triumphant",
     "HS Triumphant",
-    "Triunfante",
-    "TM"
+    "Triunfante"
   ],
   "Call of Legends": [
     "Call of Legends",
@@ -1160,8 +1153,7 @@
   ],
   "Stormfront": [
     "Stormfront",
-    "Frente Tormentoso",
-    "SF"
+    "Frente Tormentoso"
   ],
   "Platinum": [
     "Platinum",
@@ -1175,8 +1167,7 @@
   ],
   "Supreme Victors": [
     "Supreme Victors",
-    "Vencedores Supremos",
-    "SV"
+    "Vencedores Supremos"
   ],
   "Arceus": [
     "Arceus",
@@ -1197,9 +1188,7 @@
     "SS"
   ],
   "EX Dragon": [
-    "EX Dragon",
-    "Dragon",
-    "DR"
+    "EX Dragon"
   ],
   "EX Team Magma vs Team Aqua": [
     "EX Team Magma vs Team Aqua",
@@ -1257,8 +1246,7 @@
   "EX Holon Phantoms": [
     "EX Holon Phantoms",
     "Holon Phantoms",
-    "Fantasmas de Holon",
-    "HP"
+    "Fantasmas de Holon"
   ],
   "EX Crystal Guardians": [
     "EX Crystal Guardians",
@@ -2569,19 +2557,35 @@
   "Excluded_NonSealed": [
     "carta",
     "carte",
+    "card",
     "cards",
     "lote de cartas",
     "lot de cartes",
     "lotto di carte",
     "promo",
     "promos",
+    "promo etb",
+    "promo upc",
+    "carta promo",
+    "promo card",
+    "sealed promo",
+    "promo sealed",
+    "nidorina",
     "scatola con accessori",
     "scatola vuota",
+    "scatola",
     "caja vacia",
     "caja vacía",
+    "vacia",
+    "vacía",
+    "vuoto",
+    "vuota",
+    "empty",
     "taco cartas",
     "taco de cartas",
+    "separadores",
     "plush toy",
+    "plush",
     "peluche",
     "peluches",
     "marco expositor",
