@@ -101,10 +101,65 @@ def test_magic_matcher_exclusions():
         "Morralla de cartas magic sueltas",
         "Carpeta y fundas Magic the Gathering",
         "Caja sola Bloomburrow sin sobres",
+        "Caja Fat Pack MTG Mirrodin Besieged (Vacía)",
+        "Magic the gathering The Hobbit Collector Booster box Vuoto",
+        "Final Fantasy Holiday Release Booster Art-Only \"Garland at the Chaos Shrine\" + Display Easel + Box",
+        "Gamegenic: The Hobbit Zip-Up 24 Pockets The Shire",
+        "One Piece Starter Deck ST-14 + Luffy op17 4to an",
+        "Gift Bundle the hobbit mtg without collector booster",
+        "Scatola chocobo bundle mtg final fantasy",
+        "3 carte Magic:the Gathering set M12 Stregoneria",
+        "Magic the gathering 100 carte The Lord of the rings lotr rare foil Collector mtg",
     ]
     for title in excluded_titles:
         ents, matches = matcher.search_product(title, top_k=1)
         assert not matches, f"Listing '{title}' should have been rejected as non-sealed, but matched: {matches}"
+
+
+def test_magic_matcher_commander_deck():
+    """Verify individual Commander decks match Magic Intropack, never full displays or full sets."""
+    matcher = NonSinglesMatcher.get_instance(game="magic")
+    deck_titles = [
+        "MTG Strixhaven Commander Deck English Sealed",
+        "Magic the gathering mazo Commander Quandrix sin limite Secretos de Strixhaven original y sellado",
+        "MTG Commander Deck Food and Fellowship - El Señor de los Anillos (Inglés / Precintado)",
+        "Magic Commander Warhammer Forces of the Imperium",
+    ]
+    for title in deck_titles:
+        ents, matches = matcher.search_product(title, top_k=1)
+        assert matches, f"Expected match for Commander deck '{title}'"
+        assert matches[0]["categoryName"] == "Magic Intropack", (
+            f"Commander deck '{title}' must map to 'Magic Intropack', got '{matches[0]['categoryName']}' ({matches[0]['name']})"
+        )
+
+
+def test_magic_matcher_collector_vs_play_disambiguation():
+    """Verify standard booster boxes without 'Collector' do not match Collector boxes, and vice versa."""
+    matcher = NonSinglesMatcher.get_instance(game="magic")
+
+    # Regular Bloomburrow box (36 packs) must match Play Booster Box, NOT Collector (12 packs)
+    ents, matches = matcher.search_product("MTG Bloomburrow Booster Box (36 Buste) Sigillato – Japanese", top_k=1)
+    assert matches, "Expected match for Bloomburrow booster box"
+    assert "Play Booster Box" in matches[0]["name"]
+    assert "Collector" not in matches[0]["name"]
+
+    # Regular MH2 box must match non-collector
+    ents, matches = matcher.search_product("Magic The Gathering Modern Horizons 2 Booster Box", top_k=1)
+    assert matches, "Expected match for MH2 booster box"
+    assert "Collector" not in matches[0]["name"]
+
+    # Explicit Collector box must match Collector
+    ents, matches = matcher.search_product("Duskmourn Collector Booster Box sealed", top_k=1)
+    assert matches, "Expected match for Duskmourn Collector box"
+    assert "Collector Booster Box" in matches[0]["name"]
+
+
+def test_magic_matcher_aftermath_booster_box():
+    """Verify March of the Machine Aftermath matches Epilogue Booster Box, not regular March of the Machine."""
+    matcher = NonSinglesMatcher.get_instance(game="magic")
+    ents, matches = matcher.search_product("Magic Booster Box March of the Machine Aftermath", top_k=1)
+    assert matches, "Expected match for Aftermath booster box"
+    assert "Aftermath Epilogue Booster Box" in matches[0]["name"]
 
 
 def test_magic_matcher_format_only_skipped():

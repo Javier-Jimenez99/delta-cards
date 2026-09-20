@@ -69,6 +69,9 @@ def test_matcher_non_sealed_exclusions():
     """Verify non-sealed listings (single cards, empty boxes, lots) are safely rejected."""
     matcher = NonSinglesMatcher.get_instance()
     excluded_titles = [
+        "Pokemon Pikachu Plush Toy 151 Chino Sellado",
+        "Nidorina sealed da etb 30esimo pokemon",
+        "Nidorina Sealed etb 30 anniversario Pokémon",
         "Carta #Pokemon #Zorua di N SVP 189 - Promo ETB Avventure Insieme ITA Sealed NM Prezzo Cadauno",
         "Promo upc 151 sealed e scatola con accessori ita",
         "Lot de 9 Carte Pokémon Ex",
