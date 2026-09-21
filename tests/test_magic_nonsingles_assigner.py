@@ -252,3 +252,73 @@ def test_magic_webhook_routing():
         magic_cards_webhook="https://discord.com/api/webhooks/magic_cards",
     )
     assert settings_no_sealed.get_webhook_url("magic", "booster_box") == "https://discord.com/api/webhooks/magic_cards"
+
+
+def test_magic_multilingual_regional_products():
+    """Verify Italian, French, and Spanish listings for Hobbit, TMNT, and displays match accurately."""
+    matcher = NonSinglesMatcher.get_instance(game="magic")
+
+    # Italian Hobbit Booster Box
+    ents, matches = matcher.search_product("Box booster lo Hobbit magic sealed ita", top_k=1)
+    assert matches, "Expected match for Italian Hobbit booster box"
+    assert "The Hobbit Play Booster Box" in matches[0]["name"]
+    assert matches[0]["categoryName"] == "Magic Display"
+
+    # Italian Hobbit Play Booster Display Box
+    ents, matches = matcher.search_product("MTG Magic: The Gathering – Lo Hobbit – Play Booster Display Box – Italiano – Nuovo Sigillato", top_k=1)
+    assert matches, "Expected match for Italian Hobbit Play Booster Display"
+    assert "The Hobbit Play Booster Box" in matches[0]["name"]
+    assert matches[0]["categoryName"] == "Magic Display"
+
+    # Italian Hobbit Collector Display
+    ents, matches = matcher.search_product("Display collector booster Magic The hobbit", top_k=1)
+    assert matches, "Expected match for Italian Hobbit Collector Display"
+    assert "The Hobbit Collector Booster Box" in matches[0]["name"]
+    assert matches[0]["categoryName"] == "Magic Display"
+
+    # Italian Booster Packs (Pacchetti)
+    ents, matches = matcher.search_product("9 Pacchetti The Hobbit – Magic: The Gathering – Nuovi Sealed – Inglese", top_k=1)
+    assert matches, "Expected match for Italian Hobbit booster packs"
+    assert "The Hobbit Play Booster" in matches[0]["name"]
+    assert matches[0]["categoryName"] == "Magic Booster"
+
+    # Spanish TMNT Bundles
+    ents, matches = matcher.search_product("MTG Magic The Gathering - TMNT Tortugas Ninja - Bundle Sellado - 9 Sobres + Promo", top_k=1)
+    assert matches, "Expected match for TMNT Tortugas Ninja bundle"
+    assert "Teenage Mutant Ninja Turtles" in matches[0]["name"]
+    assert matches[0]["categoryName"] == "Magic Fatpack"
+
+    ents, matches = matcher.search_product("Magic bundle tortugas ninja", top_k=1)
+    assert matches, "Expected match for Magic bundle tortugas ninja"
+    assert "Teenage Mutant Ninja Turtles" in matches[0]["name"]
+    assert matches[0]["categoryName"] == "Magic Fatpack"
+
+    # Spanish Hobbit Bundle
+    ents, matches = matcher.search_product("Magic The Gathering: El Hobbit Bundle Sellado", top_k=1)
+    assert matches, "Expected match for El Hobbit bundle"
+    assert "The Hobbit Fat Pack Bundle" in matches[0]["name"]
+    assert matches[0]["categoryName"] == "Magic Fatpack"
+
+    # French Strixhaven Display
+    ents, matches = matcher.search_product("Display 30 boosters de strixhaven", top_k=1)
+    assert matches, "Expected match for Strixhaven display"
+    assert "Strixhaven" in matches[0]["name"]
+    assert matches[0]["categoryName"] == "Magic Display"
+
+
+def test_magic_commander_deck_set_disambiguation():
+    """Verify single Commander decks NEVER match the expensive 4-deck set."""
+    matcher = NonSinglesMatcher.get_instance(game="magic")
+
+    # Single sealed deck without 'set' signal must not match 'Deck Set'
+    ents, matches = matcher.search_product("MTG Strixhaven Commander Deck English Sealed", top_k=1)
+    assert matches, "Expected match for single Commander deck"
+    assert "Deck Set" not in matches[0]["name"], "Single commander deck must not match 4-deck set"
+    assert matches[0]["categoryName"] == "Magic Intropack"
+
+    # Quandrix single deck with specific name
+    ents, matches = matcher.search_product("Magic the gathering mazo Commander Quandrix sin limite Secretos de Strixhaven original y sellado", top_k=1)
+    assert matches, "Expected match for Quandrix Commander deck"
+    assert "Deck Set" not in matches[0]["name"], "Quandrix deck must not match Deck Set"
+    assert matches[0]["categoryName"] == "Magic Intropack"
+

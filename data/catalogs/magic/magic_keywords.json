@@ -14,7 +14,21 @@
     "Caja de 30 sobres",
     "Caja 30 sobres",
     "Caja de 24 sobres",
-    "Caja 24 sobres"
+    "Caja 24 sobres",
+    "Box booster",
+    "Display di booster",
+    "Display de boosters",
+    "Display di bustine",
+    "Display bustine",
+    "Display scellée",
+    "Display scellé",
+    "Boîte de boosters",
+    "Boite de boosters",
+    "Caja precintada",
+    "Caja sellada",
+    "Display 30 boosters",
+    "Display 30 buste",
+    "Display di 36 bustine"
   ],
   "Collector Booster Box": [
     "Collector Booster Box",
@@ -26,7 +40,12 @@
     "Display Collector",
     "Caja de sobres de coleccionista",
     "Caja sobres coleccionista",
-    "Caja de 12 sobres coleccionista"
+    "Caja de 12 sobres coleccionista",
+    "Display collector booster",
+    "Display scellé collector",
+    "Display scelle collector",
+    "Display collector",
+    "Collector booster box sigillato"
   ],
   "Play Booster Box": [
     "Play Booster Box",
@@ -34,7 +53,10 @@
     "Play Booster Display",
     "Caja Play Booster",
     "Caja de sobres de juego",
-    "Display Play Booster"
+    "Display Play Booster",
+    "Play Booster Display Box",
+    "Play Booster Box 30 bustine",
+    "Play booster display"
   ],
   "Draft Booster Box": [
     "Draft Booster Box",
@@ -69,7 +91,11 @@
     "Fat Packs",
     "Fatpack",
     "Fatpacks",
-    "Fat Pack Bundle"
+    "Fat Pack Bundle",
+    "Pizza Bundle",
+    "Commander's bundle",
+    "Commanders bundle",
+    "Fat pack bundle"
   ],
   "Gift Bundle": [
     "Gift Bundle",
@@ -87,7 +113,15 @@
     "Sobre",
     "Sobres",
     "Sobre suelto",
-    "Sobres sueltos"
+    "Sobres sueltos",
+    "Bustina",
+    "Bustine",
+    "Buste",
+    "Pacchetti",
+    "Pacchetto",
+    "Busta",
+    "Pack bustina",
+    "Pacchetti sfusi"
   ],
   "Collector Booster": [
     "Collector Booster",
@@ -130,7 +164,10 @@
     "Commander Precon",
     "Deck Commander",
     "Baraja Commander",
-    "Commander"
+    "Commander",
+    "Mazzo Commander",
+    "Commander Deck Sealed",
+    "Commander Deck Precintado"
   ],
   "Commander Deck Set": [
     "Commander Decks Set",
@@ -150,7 +187,9 @@
     "Kit de Presentacion",
     "Caja de Presentación",
     "Caja de Presentacion",
-    "Tournament Pack"
+    "Tournament Pack",
+    "Prerelease Sellado",
+    "Pack Prerelease"
   ],
   "Starter Kit": [
     "Starter Kit",
@@ -160,7 +199,11 @@
     "Kit de Inicio 2023",
     "2-Player Starter Set",
     "Starter Deck",
-    "Two-Player Starter Set"
+    "Two-Player Starter Set",
+    "Caja de Principiante",
+    "Caja de principiantes",
+    "Caja de Principiantes",
+    "Starter 2000"
   ],
   "Secret Lair": [
     "Secret Lair",
@@ -340,7 +383,24 @@
     "Pokémon",
     "Yu-Gi-Oh",
     "Yugioh",
-    "Lorcana"
+    "Lorcana",
+    "vuoto",
+    "vuota",
+    "scatola vuota",
+    "caja vacia",
+    "caja vacía",
+    "scatola",
+    "empty",
+    "sin sobres",
+    "rotuladores",
+    "trackpad",
+    "serum",
+    "duel masters",
+    "naruto",
+    "yu-gi-oh",
+    "yugioh",
+    "medallion",
+    "pro prospects"
   ],
   "Modern Horizons 3": [
     "Modern Horizons 3",
@@ -415,7 +475,9 @@
     "Senor de los Anillos",
     "LTR",
     "LOTR",
-    "Tierra Media"
+    "Tierra Media",
+    "Le Seigneur des Anneaux",
+    "Il Signore degli Anelli"
   ],
   "March of the Machine: The Aftermath": [
     "March of the Machine: The Aftermath",
@@ -646,7 +708,10 @@
   "Final Fantasy": [
     "Final Fantasy",
     "Magic: The Gathering - FINAL FANTASY",
-    "FF"
+    "FF",
+    "Chocobo Bundle",
+    "MTG Chocobo",
+    "Chocobo"
   ],
   "Aetherdrift": [
     "Aetherdrift",
@@ -685,15 +750,21 @@
   "Avatar: The Last Airbender": [
     "Avatar: The Last Airbender",
     "The Last Airbender",
-    "Airbender"
+    "Airbender",
+    "Avatar",
+    "El Último Maestro del Aire",
+    "El Ultimo Maestro Aire"
   ],
   "Core Set 2021": [
     "Core Set 2021",
-    "M21"
+    "M21",
+    "Core 2021"
   ],
   "Core Set 2020": [
     "Core Set 2020",
-    "M20"
+    "M20",
+    "Édition de Base 2020",
+    "Edition de Base 2020"
   ],
   "Core Set 2019": [
     "Core Set 2019",
@@ -705,7 +776,9 @@
   ],
   "Magic 2014": [
     "Magic 2014",
-    "M14"
+    "M14",
+    "2014 Core Set",
+    "Core Set 2014"
   ],
   "Magic 2013": [
     "Magic 2013",
@@ -737,19 +810,36 @@
   ],
   "The Hobbit": [
     "The Hobbit",
-    "HOB"
+    "HOB",
+    "El Hobbit",
+    "Lo Hobbit",
+    "Le Hobbit",
+    "Hobbit",
+    "El Hobbit MTG",
+    "Lo Hobbit MTG"
   ],
   "Marvel Super Heroes": [
     "Marvel Super Heroes",
-    "MSH"
+    "MSH",
+    "Super Heroes",
+    "Superheroes",
+    "Marvel Superheroes"
   ],
   "Secrets of Strixhaven": [
     "Secrets of Strixhaven",
-    "SOS"
+    "SOS",
+    "Secretos de Strixhaven",
+    "Strixhaven",
+    "strixheaven"
   ],
   "Teenage Mutant Ninja Turtles": [
     "Teenage Mutant Ninja Turtles",
-    "TMT"
+    "TMT",
+    "Tortugas Ninja",
+    "TMNT",
+    "Teenage Turtles",
+    "Tartarughe Ninja",
+    "Las Tortugas Ninja"
   ],
   "Lorwyn Eclipsed": [
     "Lorwyn Eclipsed",
@@ -757,7 +847,10 @@
   ],
   "Marvel's Spider-Man": [
     "Marvel's Spider-Man",
-    "SPM"
+    "SPM",
+    "Spider-Man",
+    "Spiderman",
+    "Spider Man"
   ],
   "Through the Omenpaths": [
     "Through the Omenpaths",
@@ -1332,5 +1425,41 @@
   "Limited Edition Alpha": [
     "Limited Edition Alpha",
     "LEA"
+  ],
+  "Draft Night": [
+    "Draft Night",
+    "Draft Night Box",
+    "Draft Night Eng",
+    "Draft Night Sellado"
+  ],
+  "Scene Box": [
+    "Scene Box",
+    "Scene Box Set",
+    "Scene Box Magic"
+  ],
+  "Quandrix": [
+    "Quandrix",
+    "Quandrix Unlimited",
+    "Quandrix sin límite",
+    "Quandrix sin limite"
+  ],
+  "Silverquill": [
+    "Silverquill",
+    "Silverquill Statement",
+    "Plumargenta"
+  ],
+  "Prismari": [
+    "Prismari",
+    "Prismari Performance"
+  ],
+  "Witherbloom": [
+    "Witherbloom",
+    "Witherbloom Witchcraft"
+  ],
+  "Lorehold": [
+    "Lorehold",
+    "Lorehold Legacies",
+    "Sapientium",
+    "Sapiéntium"
   ]
 }

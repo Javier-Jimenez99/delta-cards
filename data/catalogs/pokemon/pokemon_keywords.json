@@ -58,7 +58,17 @@
     "BB",
     "Display box",
     "Display de 36 sobres",
-    "Booster display"
+    "Booster display",
+    "Caja precintada",
+    "Caja sellada",
+    "Box jap sigillato",
+    "Box sigillato",
+    "Caja Pokémon sellada",
+    "Caja Pokemon sellada",
+    "Caja Pokémon",
+    "Caja Pokemon",
+    "Caja sellada Pokémon",
+    "Caja sellada Pokemon"
   ],
   "Booster Bundle": [
     "Booster Bundle",
@@ -122,14 +132,24 @@
     "Coleccion Especial Premium",
     "Premium Tournament Collection",
     "Colección de torneo premium",
-    "Coleccion de torneo premium"
+    "Coleccion de torneo premium",
+    "Caja Colección",
+    "Caja Coleccion",
+    "Caja de Colección",
+    "Caja de Coleccion",
+    "Pack Coleccionista"
   ],
   "Special Collection": [
     "Special Collection",
     "Colección Especial",
     "Coleccion Especial",
     "Caja Especial",
-    "Colección de aniversario"
+    "Colección de aniversario",
+    "Caja Colección",
+    "Caja Coleccion",
+    "Caja de Colección",
+    "Caja de Coleccion",
+    "Pack Coleccionista"
   ],
   "Super-Premium Collection": [
     "Super Premium Collection",
@@ -295,7 +315,11 @@
     "Álbum de colección",
     "Album de coleccion",
     "Carpeta de colección",
-    "Carpeta de coleccion"
+    "Carpeta de coleccion",
+    "Collezione con Raccoglitore",
+    "Collezione con raccoglit",
+    "Collezione con Raccoglit",
+    "Colección con Archivador"
   ],
   "Poster Collection": [
     "Poster Collection",
@@ -574,7 +598,8 @@
   "Shiny Treasure ex": [
     "Shiny Treasure ex",
     "Shiny Treasure",
-    "Tesoro Brillante"
+    "Tesoro Brillante",
+    "Shiny Treasure ex Box"
   ],
   "Ancient Roar": [
     "Ancient Roar",
@@ -946,7 +971,8 @@
     "Primal Clash",
     "Duelo Primigenio",
     "PRC",
-    "XY05"
+    "XY05",
+    "Duelos Primigenios"
   ],
   "Double Crisis": [
     "Double Crisis",
@@ -2345,7 +2371,12 @@
     "Zoroark",
     "Hisuian Zoroark",
     "Zoroark GX",
-    "Zoroark VSTAR"
+    "Zoroark VSTAR",
+    "Zoroark de Hisui",
+    "Zoroark de Hisui V-Astro",
+    "Zoroark V-Astro",
+    "Zoroark VAstro",
+    "Zoroark de Hisui VAstro"
   ],
   "Goodra": [
     "Goodra",
@@ -2603,6 +2634,32 @@
     "solo bustine",
     "etb accesorios",
     "accesorios etb",
-    "accessori etb"
+    "accessori etb",
+    "takara tomy",
+    "figura"
+  ],
+  "Inferno X": [
+    "Inferno X",
+    "Inferno X Box",
+    "Inferno x box"
+  ],
+  "Mega Dream": [
+    "Mega Dream",
+    "Mega Dream ex",
+    "Mega Dream EX"
+  ],
+  "Hisuian Zoroark": [
+    "Hisuian Zoroark",
+    "Zoroark de Hisui",
+    "Hisuian Zoroark VSTAR",
+    "Zoroark de Hisui V-Astro",
+    "Zoroark V-Astro",
+    "Zoroark VAstro"
+  ],
+  "VSTAR": [
+    "VSTAR",
+    "V-Astro",
+    "VAstro",
+    "V Astro"
   ]
 }

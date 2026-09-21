@@ -3,7 +3,9 @@
 from dataclasses import dataclass
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+import threading
+from typing import Any, Dict, List, Optional, Tuple, Union
+import numpy as np
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
@@ -18,8 +20,28 @@ from .client import (
     fetch_scryfall_card_pricing,
     _default_client,
 )
+from .vector_cache import (
+    ScryfallVectorCache,
+    get_default_scryfall_vector_cache,
+    get_scryfall_image_url,
+)
 
 logger = logging.getLogger(__name__)
+
+_default_embedder = None
+_embedder_lock = threading.Lock()
+
+
+def get_default_dinov3_embedder():
+    """Lazily initializes and returns the shared DINOv3 embedder instance."""
+    global _default_embedder
+    if _default_embedder is None:
+        with _embedder_lock:
+            if _default_embedder is None:
+                from ..recognition.dinov3_embedder import DINOv3Embedder
+                _default_embedder = DINOv3Embedder()
+    return _default_embedder
+
 
 # Regex pattern to match set code (3-4 alphanumeric) and collector number (e.g. MH3 138, LTR #001)
 SET_NUMBER_PATTERN = re.compile(
@@ -484,14 +506,100 @@ def select_best_magic_printing(
     return scored[0][2]
 
 
+def select_best_magic_printing_visual(
+    printings: List[Dict[str, Any]],
+    listing_image: Union[str, bytes, np.ndarray],
+    features: Optional[MagicListingFeatures] = None,
+    embedder: Optional[Any] = None,
+    vector_cache: Optional[ScryfallVectorCache] = None,
+    detector: Optional[Any] = None,
+) -> Tuple[Optional[Dict[str, Any]], float]:
+    """Selects the best matching Scryfall printing for a listing using DINOv3 visual embeddings.
+
+    Extracts or retrieves DINOv3 dense vector representations for each candidate printing,
+    computes cosine similarity with the listing's image, and selects the version with the highest score.
+    In case of near-identical visual similarity (e.g. shared artwork between regular and foil versions),
+    features-based scoring is used as a tiebreaker.
+
+    Args:
+        printings: List of candidate Scryfall card dictionaries.
+        listing_image: Image URL, bytes, or NumPy BGR array of the listing photograph.
+        features: Optional extracted text features for tie-breaking.
+        embedder: Optional DINOv3Embedder instance.
+        vector_cache: Optional ScryfallVectorCache instance.
+        detector: Optional VisualCardDetector to crop card boundaries.
+
+    Returns:
+        Tuple of (selected_card_dict, similarity_score).
+    """
+    if not printings:
+        return None, 0.0
+
+    if len(printings) == 1 and not listing_image:
+        return printings[0], 1.0
+
+    emb = embedder or get_default_dinov3_embedder()
+    vcache = vector_cache or get_default_scryfall_vector_cache()
+
+    listing_crop = listing_image
+    if detector is not None:
+        try:
+            listing_crop = detector.isolate_card(listing_image)
+        except Exception as e:
+            logger.debug(f"Detector could not isolate card, using original image: {e}")
+            listing_crop = listing_image
+
+    try:
+        listing_vec = emb.embed_image(listing_crop)
+    except Exception as exc:
+        logger.warning(f"Failed to extract DINOv3 embedding from listing image: {exc}")
+        fallback = select_best_magic_printing(printings, features or MagicListingFeatures()) if features else printings[0]
+        return fallback, 0.0
+
+    scored_prints: List[Tuple[float, float, str, Dict[str, Any]]] = []
+    for p in printings:
+        try:
+            p_vec = vcache.get_or_compute_vector(p, emb)
+            if p_vec is not None:
+                sim = float(np.dot(listing_vec, p_vec))
+            else:
+                sim = -1.0
+        except Exception as exc:
+            logger.debug(f"Error getting vector for card printing {p.get('id')}: {exc}")
+            sim = -1.0
+
+        t_score = score_magic_printing(p, features) if features else 0.0
+        rel_date = str(p.get("released_at") or "")
+        scored_prints.append((sim, t_score, rel_date, p))
+
+    if not scored_prints:
+        fallback = select_best_magic_printing(printings, features or MagicListingFeatures()) if features else printings[0]
+        return fallback, 0.0
+
+    # Sort descending by visual similarity
+    scored_prints.sort(key=lambda item: item[0], reverse=True)
+    best_sim = scored_prints[0][0]
+
+    # In case of near-identical visual score (e.g. difference < 0.01 for same artwork), use text features as tie-breaker
+    top_candidates = [item for item in scored_prints if item[0] >= best_sim - 0.01]
+    top_candidates.sort(key=lambda item: (item[1], item[2]), reverse=True)
+    winner = top_candidates[0][3]
+
+    return winner, best_sim
+
+
 def resolve_scryfall_card(
     title: str,
     description: Optional[str] = None,
     client: Optional[ScryfallClient] = None,
     language: str = "es",
+    image_url: Optional[Union[str, bytes, np.ndarray]] = None,
+    vector_cache: Optional[ScryfallVectorCache] = None,
+    embedder: Optional[Any] = None,
+    detector: Optional[Any] = None,
 ) -> Optional[Dict[str, Any]]:
     """Resolves a marketplace listing to a Scryfall card and Cardmarket pricing,
-    taking into account printings, variants, arts, finishes, and sets."""
+    taking into account printings, variants, arts, finishes, sets, and DINOv3 visual matching."""
     cli = client or _default_client
     features = extract_magic_listing_features(title, description)
 
@@ -501,13 +609,17 @@ def resolve_scryfall_card(
         return None
 
     card_data: Optional[Dict[str, Any]] = None
+    candidate_prints: List[Dict[str, Any]] = []
 
     # 2. Strategy 1: Look up by set code and collector number
     if features.set_code and features.collector_number:
         try:
-            card_data = cli.get_card_by_set_number(features.set_code, features.collector_number, lang=language)
-            if not card_data:
-                card_data = cli.get_card_by_set_number(features.set_code, features.collector_number)
+            c = cli.get_card_by_set_number(features.set_code, features.collector_number, lang=language)
+            if not c:
+                c = cli.get_card_by_set_number(features.set_code, features.collector_number)
+            if c:
+                card_data = c
+                candidate_prints = [c]
         except Exception as err:
             logger.debug(f"Error checking Scryfall set/number ({features.set_code}/{features.collector_number}): {err}")
 
@@ -519,27 +631,66 @@ def resolve_scryfall_card(
 
             prints = cli.get_card_prints(canonical_name, set_code=features.set_code)
             if isinstance(prints, list) and prints and isinstance(prints[0], dict):
-                card_data = select_best_magic_printing(prints, features)
+                candidate_prints = prints
             elif isinstance(base_card, dict):
-                card_data = base_card
+                candidate_prints = [base_card]
         except Exception as err:
             logger.debug(f"Error checking Scryfall name '{features.candidate_name}': {err}")
 
     # 4. Strategy 3: Fallback query search if candidate has multiple tokens
-    if not card_data and features.candidate_name and len(features.candidate_name.split()) >= 2:
+    if not candidate_prints and not card_data and features.candidate_name and len(features.candidate_name.split()) >= 2:
         try:
             results = cli.search_cards(features.candidate_name)
             if isinstance(results, list) and results and isinstance(results[0], dict):
-                card_data = select_best_magic_printing(results, features) or results[0]
-            elif isinstance(results, list) and results:
-                card_data = results[0]
+                candidate_prints = results
         except Exception as err:
             logger.debug(f"Error in Scryfall search fallback for '{features.candidate_name}': {err}")
+
+    if not candidate_prints and not card_data:
+        return None
+
+    visual_similarity: Optional[float] = None
+
+    # Visual Matching with DINOv3:
+    # If listing image is provided:
+    # Check if we have multiple versions; if only 1 version was found, expand it to all versions of that card.
+    if image_url:
+        if len(candidate_prints) <= 1:
+            base_c = candidate_prints[0] if candidate_prints else card_data
+            if base_c:
+                try:
+                    expanded = cli.get_card_prints_for_card(base_c)
+                    if expanded and len(expanded) > 1:
+                        candidate_prints = expanded
+                except Exception as exc:
+                    logger.debug(f"Could not expand printings for card: {exc}")
+
+        if candidate_prints:
+            best_visual_card, sim = select_best_magic_printing_visual(
+                printings=candidate_prints,
+                listing_image=image_url,
+                features=features,
+                embedder=embedder,
+                vector_cache=vector_cache,
+                detector=detector,
+            )
+            if best_visual_card:
+                card_data = best_visual_card
+                visual_similarity = sim
+
+    # If card_data was not chosen via visual matching, use text feature scoring
+    if not card_data:
+        if candidate_prints:
+            card_data = select_best_magic_printing(candidate_prints, features) or candidate_prints[0]
 
     if not card_data:
         return None
 
-    return extract_scryfall_cardmarket_prices(card_data, language=language, is_foil=features.is_foil)
+    pricing_info = extract_scryfall_cardmarket_prices(card_data, language=language, is_foil=features.is_foil)
+    if visual_similarity is not None:
+        pricing_info["visual_similarity"] = visual_similarity
+
+    return pricing_info
 
 
 def _apply_scryfall_result_to_offer(offer: Any, pricing_info: Dict[str, Any]) -> None:
@@ -588,11 +739,18 @@ def _apply_scryfall_result_to_offer(offer: Any, pricing_info: Dict[str, Any]) ->
     if pricing_info.get("image_url") and not getattr(offer, "image_url", None):
         offer.image_url = pricing_info["image_url"]
 
+    vis_sim = pricing_info.get("visual_similarity")
+    if vis_sim is not None:
+        object.__setattr__(offer, "_temp_visual_similarity", vis_sim)
+
 
 def assign_scryfall_to_offers(
     offers: List[OfferListing],
     client: Optional[ScryfallClient] = None,
     progress_callback: Optional[Any] = None,
+    vector_cache: Optional[ScryfallVectorCache] = None,
+    embedder: Optional[Any] = None,
+    detector: Optional[Any] = None,
 ) -> List[OfferListing]:
     """Enriches a list of OfferListing objects with Scryfall ID and Cardmarket Product ID."""
     if not offers:
@@ -613,6 +771,10 @@ def assign_scryfall_to_offers(
                 description=offer.description,
                 client=cli,
                 language=offer.language or "es",
+                image_url=getattr(offer, "image_url", None),
+                vector_cache=vector_cache,
+                embedder=embedder,
+                detector=detector,
             )
             if res:
                 _apply_scryfall_result_to_offer(offer, res)
@@ -629,6 +791,9 @@ def enrich_magic_offers_in_db(
     engine: Optional[Engine] = None,
     limit: Optional[int] = None,
     client: Optional[ScryfallClient] = None,
+    vector_cache: Optional[ScryfallVectorCache] = None,
+    embedder: Optional[Any] = None,
+    detector: Optional[Any] = None,
 ) -> int:
     """Enriches existing Magic card offers stored in the PlatformOffers database table
 
@@ -679,6 +844,10 @@ def enrich_magic_offers_in_db(
                     description=db_o.description,
                     client=cli,
                     language=db_o.language or "es",
+                    image_url=getattr(db_o, "image_url", None),
+                    vector_cache=vector_cache,
+                    embedder=embedder,
+                    detector=detector,
                 )
                 if res and res.get("idProduct"):
                     _apply_scryfall_result_to_offer(db_o, res)
@@ -727,3 +896,4 @@ def enrich_magic_offers_in_db(
 
         session.commit()
         return updated_count
+

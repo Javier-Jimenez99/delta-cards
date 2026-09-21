@@ -1,6 +1,7 @@
-"""Tests for Scryfall client, Magic cardmarket pricing extraction, and Magic assigner."""
-
+import os
+import tempfile
 from unittest.mock import patch, MagicMock
+import numpy as np
 import pytest
 from sqlmodel import Session, select
 
@@ -13,16 +14,22 @@ from delta_cards.scryfall.client import (
     extract_scryfall_cardmarket_prices,
     fetch_scryfall_card_pricing,
 )
+from delta_cards.scryfall.vector_cache import (
+    ScryfallVectorCache,
+    get_scryfall_image_url,
+)
 from delta_cards.scryfall.assigner import (
     extract_magic_identifiers,
     extract_magic_listing_features,
     MagicListingFeatures,
     score_magic_printing,
     select_best_magic_printing,
+    select_best_magic_printing_visual,
     resolve_scryfall_card,
     assign_scryfall_to_offers,
     enrich_magic_offers_in_db,
 )
+
 
 
 def test_build_magic_cardmarket_url():
@@ -428,4 +435,342 @@ def test_resolve_scryfall_card_version_aware_e2e():
     assert result["idProduct"] == "716083"
     assert result["collector_number"] == "451"
     assert result["prices"]["avg"] == 92.86  # eur_foil picked because listing is foil
+
+
+def test_scryfall_vector_cache_save_and_load():
+    """Verify ScryfallVectorCache properly stores and retrieves vectors from SQLite and memory."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "test_vectors.sqlite")
+        cache = ScryfallVectorCache(db_path=db_path)
+
+        # Create synthetic unit vector
+        dummy_vec = np.zeros(384, dtype=np.float32)
+        dummy_vec[0] = 1.0
+
+        card_id = "test-card-uuid-1"
+        cache.save_vector(
+            scryfall_id=card_id,
+            embedding=dummy_vec,
+            name="Sol Ring",
+            set_code="cmm",
+            collector_number="400",
+            image_url="https://cards.scryfall.io/test.jpg",
+        )
+
+        # 1. Retrieve from memory cache
+        loaded_mem = cache.get_vector(card_id)
+        assert loaded_mem is not None
+        assert np.allclose(loaded_mem, dummy_vec)
+
+        # 2. Re-open new cache instance to test persistent SQLite retrieval
+        cache2 = ScryfallVectorCache(db_path=db_path)
+        loaded_db = cache2.get_vector(card_id)
+        assert loaded_db is not None
+        assert np.allclose(loaded_db, dummy_vec)
+
+        # 3. Cache miss returns None
+        assert cache2.get_vector("non-existent-id") is None
+
+
+def test_scryfall_vector_cache_get_or_compute():
+    """Verify get_or_compute_vector computes on miss and uses cache on subsequent calls."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "test_vectors.sqlite")
+        cache = ScryfallVectorCache(db_path=db_path)
+
+        mock_embedder = MagicMock()
+        dummy_vec = np.random.randn(384).astype(np.float32)
+        dummy_vec /= np.linalg.norm(dummy_vec)
+        mock_embedder.embed_image.return_value = dummy_vec
+
+        card_data = {
+            "id": "card-123",
+            "name": "Black Lotus",
+            "set": "lea",
+            "collector_number": "232",
+            "image_uris": {"normal": "https://cards.scryfall.io/lotus.jpg"},
+        }
+
+        # First call: computes via embedder
+        vec1 = cache.get_or_compute_vector(card_data, mock_embedder)
+        assert vec1 is not None
+        assert np.allclose(vec1, dummy_vec)
+        assert mock_embedder.embed_image.call_count == 1
+
+        # Second call: uses cached vector without calling embedder again
+        vec2 = cache.get_or_compute_vector(card_data, mock_embedder)
+        assert vec2 is not None
+        assert np.allclose(vec2, dummy_vec)
+        assert mock_embedder.embed_image.call_count == 1
+
+
+def test_scryfall_get_card_prints_for_card_expansion():
+    """Verify that get_card_prints_for_card expands 1 card into all versions via oracle_id."""
+    client = ScryfallClient()
+
+    card = {
+        "id": "card-one-ring-reg",
+        "name": "The One Ring",
+        "oracle_id": "oracle-uuid-ring",
+        "set": "ltr",
+        "collector_number": "246",
+    }
+
+    all_prints = [
+        {"id": "card-one-ring-reg", "name": "The One Ring", "collector_number": "246"},
+        {"id": "card-one-ring-borderless", "name": "The One Ring", "collector_number": "451"},
+    ]
+
+    with patch.object(client, "search_cards", return_value=all_prints) as mock_search:
+        results = client.get_card_prints_for_card(card)
+        assert len(results) == 2
+        mock_search.assert_called_once_with('oracle_id:"oracle-uuid-ring" unique:prints')
+
+
+def test_select_best_magic_printing_visual():
+    """Verify that select_best_magic_printing_visual picks the printing with highest cosine similarity."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache = ScryfallVectorCache(db_path=os.path.join(tmpdir, "test.sqlite"))
+
+        # Create vectors:
+        # listing_vec is [1, 0, 0, ...]
+        listing_vec = np.zeros(384, dtype=np.float32)
+        listing_vec[0] = 1.0
+
+        # version 1 (regular): [0, 1, 0, ...] -> dot product = 0.0
+        vec_reg = np.zeros(384, dtype=np.float32)
+        vec_reg[1] = 1.0
+
+        # version 2 (showcase): [0.98, 0.2, 0, ...] -> dot product = 0.98 (winner!)
+        vec_showcase = np.zeros(384, dtype=np.float32)
+        vec_showcase[0] = 0.98
+        vec_showcase[1] = 0.2
+        vec_showcase /= np.linalg.norm(vec_showcase)
+
+        printings = [
+            {
+                "id": "p-regular",
+                "name": "Sheoldred",
+                "collector_number": "107",
+                "image_uris": {"normal": "https://cards.scryfall.io/reg.jpg"},
+            },
+            {
+                "id": "p-showcase",
+                "name": "Sheoldred",
+                "collector_number": "315",
+                "image_uris": {"normal": "https://cards.scryfall.io/showcase.jpg"},
+            },
+        ]
+
+        cache.save_vector("p-regular", vec_reg)
+        cache.save_vector("p-showcase", vec_showcase)
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_image.return_value = listing_vec
+
+        winner, sim = select_best_magic_printing_visual(
+            printings=printings,
+            listing_image="https://marketplace.com/photo.jpg",
+            embedder=mock_embedder,
+            vector_cache=cache,
+        )
+
+        assert winner is not None
+        assert winner["id"] == "p-showcase"
+        assert sim > 0.90
+
+
+def test_select_best_magic_printing_visual_tiebreaker():
+    """Verify that when two printings have identical art/vectors, text features break the tie."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache = ScryfallVectorCache(db_path=os.path.join(tmpdir, "test.sqlite"))
+
+        # Both versions have the identical card scan
+        shared_vec = np.zeros(384, dtype=np.float32)
+        shared_vec[0] = 1.0
+
+        printings = [
+            {
+                "id": "p-nonfoil",
+                "name": "Counterspell",
+                "set": "mh2",
+                "collector_number": "267",
+                "finishes": ["nonfoil"],
+                "image_uris": {"normal": "https://cards.scryfall.io/cs.jpg"},
+                "released_at": "2021-06-18",
+            },
+            {
+                "id": "p-foil",
+                "name": "Counterspell",
+                "set": "mh2",
+                "collector_number": "267",
+                "finishes": ["foil"],
+                "image_uris": {"normal": "https://cards.scryfall.io/cs.jpg"},
+                "released_at": "2021-06-18",
+            },
+        ]
+
+        cache.save_vector("p-nonfoil", shared_vec)
+        cache.save_vector("p-foil", shared_vec)
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_image.return_value = shared_vec
+
+        # Listing specifies "Foil" -> features should choose p-foil
+        features = MagicListingFeatures(candidate_name="Counterspell", is_foil=True)
+
+        winner, sim = select_best_magic_printing_visual(
+            printings=printings,
+            listing_image="https://marketplace.com/photo.jpg",
+            features=features,
+            embedder=mock_embedder,
+            vector_cache=cache,
+        )
+
+        assert winner is not None
+        assert winner["id"] == "p-foil"
+        assert sim == 1.0
+
+
+def test_resolve_scryfall_card_expands_and_matches_visually():
+    """Verify resolve_scryfall_card expands 1 card into versions and ranks with visual similarity."""
+    mock_client = MagicMock(spec=ScryfallClient)
+    # 1. Base lookup returns only 1 card
+    mock_client.get_card_by_name.return_value = {
+        "id": "p-default",
+        "name": "The One Ring",
+        "oracle_id": "oracle-ring",
+    }
+    # get_card_prints returns empty initially
+    mock_client.get_card_prints.return_value = []
+
+    # 2. Expansion returns all versions
+    all_versions = [
+        {
+            "id": "p-default",
+            "name": "The One Ring",
+            "collector_number": "246",
+            "cardmarket_id": 701676,
+            "prices": {"eur": "90.00"},
+            "image_uris": {"normal": "https://cards.scryfall.io/reg.jpg"},
+        },
+        {
+            "id": "p-borderless",
+            "name": "The One Ring",
+            "collector_number": "451",
+            "cardmarket_id": 716083,
+            "prices": {"eur": "95.00"},
+            "image_uris": {"normal": "https://cards.scryfall.io/borderless.jpg"},
+        },
+    ]
+    mock_client.get_card_prints_for_card.return_value = all_versions
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache = ScryfallVectorCache(db_path=os.path.join(tmpdir, "test.sqlite"))
+
+        # Setup vectors so that borderless is the visual winner
+        listing_vec = np.zeros(384, dtype=np.float32)
+        listing_vec[0] = 1.0
+
+        vec_reg = np.zeros(384, dtype=np.float32)
+        vec_reg[1] = 1.0
+
+        vec_borderless = np.zeros(384, dtype=np.float32)
+        vec_borderless[0] = 1.0
+
+        cache.save_vector("p-default", vec_reg)
+        cache.save_vector("p-borderless", vec_borderless)
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_image.return_value = listing_vec
+
+        res = resolve_scryfall_card(
+            title="The One Ring",
+            client=mock_client,
+            image_url="https://marketplace.com/ring_photo.jpg",
+            vector_cache=cache,
+            embedder=mock_embedder,
+        )
+
+        assert res is not None
+        assert res["idProduct"] == "716083"  # Borderless chosen!
+        assert res["collector_number"] == "451"
+        assert res.get("visual_similarity") is not None
+        assert res["visual_similarity"] == 1.0
+
+
+def test_assign_scryfall_to_offers_with_image_url():
+    """Verify assign_scryfall_to_offers passes image_url and sets visual similarity."""
+    mock_client = MagicMock(spec=ScryfallClient)
+    mock_client.get_card_by_name.return_value = {
+        "id": "sheoldred-107",
+        "name": "Sheoldred",
+        "set": "dmu",
+        "collector_number": "107",
+        "cardmarket_id": 673200,
+        "prices": {"eur": "70.00"},
+        "image_uris": {"normal": "https://cards.scryfall.io/sheoldred.jpg"},
+    }
+    mock_client.get_card_prints.return_value = [mock_client.get_card_by_name.return_value]
+    mock_client.get_card_prints_for_card.return_value = [mock_client.get_card_by_name.return_value]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache = ScryfallVectorCache(db_path=os.path.join(tmpdir, "test.sqlite"))
+        dummy_vec = np.zeros(384, dtype=np.float32)
+        dummy_vec[0] = 1.0
+        cache.save_vector("sheoldred-107", dummy_vec)
+
+        mock_embedder = MagicMock()
+        mock_embedder.embed_image.return_value = dummy_vec
+
+        offers = [
+            OfferListing(
+                id="offer-img-1",
+                title="Sheoldred the Apocalypse",
+                price=35.0,
+                product_type="single_card",
+                platform="wallapop",
+                link="https://es.wallapop.com/item/img-1",
+                image_url="https://cdn.wallapop.com/images/sheoldred.jpg",
+            )
+        ]
+
+        assigned = assign_scryfall_to_offers(
+            offers,
+            client=mock_client,
+            vector_cache=cache,
+            embedder=mock_embedder,
+        )
+
+        assert assigned[0].cardmarket_product_id == "673200"
+        assert getattr(assigned[0], "_temp_visual_similarity", None) == 1.0
+
+
+def test_real_dinov3_embedder_with_vector_cache():
+    """Verify real DINOv3 embedder generates valid 384-dim embeddings and caches them."""
+    from delta_cards.recognition.dinov3_embedder import DINOv3Embedder
+
+    embedder = DINOv3Embedder()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache = ScryfallVectorCache(db_path=os.path.join(tmpdir, "test.sqlite"))
+
+        # Synthetic card images (e.g. 224x224 RGB image arrays)
+        img1 = np.full((224, 224, 3), 128, dtype=np.uint8)
+        img2 = np.full((224, 224, 3), 200, dtype=np.uint8)
+
+        vec1 = embedder.embed_image(img1)
+        assert vec1.shape == (384,)
+        assert abs(np.linalg.norm(vec1) - 1.0) < 1e-4
+
+        # Save into cache and verify
+        cache.save_vector("real-test-1", vec1, name="Test Card")
+        cached_vec = cache.get_vector("real-test-1")
+        assert cached_vec is not None
+        assert np.allclose(vec1, cached_vec)
+
+        vec2 = embedder.embed_image(img2)
+        # Cosine similarity between two unit vectors
+        sim = float(np.dot(vec1, vec2))
+        assert -1.0 <= sim <= 1.0
+
 

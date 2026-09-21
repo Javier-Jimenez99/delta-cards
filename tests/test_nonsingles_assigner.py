@@ -186,3 +186,21 @@ def test_webhook_routing_by_category():
     assert settings.get_webhook_url("pokemon", "etb") == "https://discord.com/api/webhooks/boxes"
     assert settings.get_webhook_url("pokemon", "tin") == "https://discord.com/api/webhooks/boxes"
     assert settings.get_webhook_url("pokemon", "box_set") == "https://discord.com/api/webhooks/boxes"
+
+
+def test_pokemon_special_collections_and_cross_set_protection():
+    """Verify Zoroark collection box, Primal Clash, and cross-set collision guards."""
+    matcher = NonSinglesMatcher.get_instance(game="pokemon")
+
+    # Zoroark VSTAR Premium Collection
+    ents, matches = matcher.search_product("Pokémon Caja Colección Zoroark de Hisui V-Astro", top_k=1)
+    assert matches, "Expected match for Zoroark VSTAR collection"
+    assert "Zoroark" in matches[0]["name"]
+    assert matches[0]["categoryName"] == "Pokémon Box Set"
+
+    # Primal Clash (Duelos Primigenios)
+    ents, matches = matcher.search_product("Caja Pokémon Duelos Primigenios", top_k=1)
+    assert matches, "Expected match for Duelos Primigenios (Primal Clash)"
+    assert "Primal Clash Booster Box" in matches[0]["name"]
+    assert matches[0]["categoryName"] == "Pokémon Display"
+

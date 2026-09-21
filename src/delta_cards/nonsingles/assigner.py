@@ -94,6 +94,8 @@ MAGIC_FORMAT_TO_CATEGORIES: Dict[str, Set[str]] = {
     "Prerelease Pack": {"Magic TournamentPack", "Magic Booster"},
     "Starter Kit": {"Magic Starter Deck", "Magic Intropack"},
     "Secret Lair": {"MtG Set", "Magic Booster"},
+    "Draft Night": {"Magic Theme Deck Display"},
+    "Scene Box": {"Magic Theme Deck Display", "MtG Set"},
 }
 
 # Alias for backwards compatibility
@@ -333,6 +335,48 @@ class NonSinglesMatcher:
                 continue
             if not has_bundle_signal and "bundle" in cand_name_lower and any(b in title_lower for b in ["booster box", "display", "36 sobres", "36 buste"]):
                 continue
+
+            # Disambiguation 3: Individual Commander Deck vs Commander Deck Set (Display of 4+ decks)
+            is_commander_deck = "Commander Deck" in detected_formats or any("commander" in e.lower() for e in unique_entities)
+            if is_commander_deck:
+                has_deck_set_signal = any(
+                    s in title_lower
+                    for s in [
+                        "deck set", "set de mazos", "todos los mazos", "4 mazos", "5 mazos",
+                        "pack 4", "pack de 4", "4x", "4 decks", "5 decks", "all 4", "all 5",
+                        "coleccion completa", "colección completa",
+                        "display de commander", "commander display", "deck display"
+                    ]
+                ) or "Commander Deck Set" in detected_formats or "Commander Display" in detected_formats
+                if not has_deck_set_signal and ("deck set" in cand_name_lower or "display" in cand_name_lower):
+                    continue
+                if has_deck_set_signal and "deck set" not in cand_name_lower and "display" not in cand_name_lower:
+                    continue
+
+            # Disambiguation 4: Cross-set collision guard (e.g. Shining Fates having no Booster Box matching Shining Darkness)
+            # If multi-word set/character entities were extracted, ensure distinguishing tokens match candidate
+            if non_format_entities:
+                set_mismatch = False
+                for nfe in non_format_entities:
+                    set_tokens = [
+                        t for t in tokenize(nfe)
+                        if t not in {
+                            "the", "of", "de", "del", "la", "el", "los", "las", "and", "y",
+                            "box", "pack", "set", "pokemon", "magic", "tcg"
+                        }
+                    ]
+                    if not set_tokens:
+                        continue
+                    # If set has edition/sequence number (e.g. MH3 vs MH2, Base Set 2), the number must match
+                    if set_tokens[-1].isdigit() and set_tokens[-1] not in cand_name_lower:
+                        set_mismatch = True
+                        break
+                    matched = [tok for tok in set_tokens if tok in cand_name_lower]
+                    if len(set_tokens) >= 2 and set_tokens[-1] not in cand_name_lower and len(matched) < 2:
+                        set_mismatch = True
+                        break
+                if set_mismatch:
+                    continue
 
             row = self.df_catalog.iloc[idx]
             results.append(
