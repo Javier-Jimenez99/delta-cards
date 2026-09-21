@@ -214,11 +214,16 @@ class ScryfallClient:
 
         return self._get("cards/named", params=params)
 
-    def search_cards(self, query: str, order: str = "released") -> List[Dict[str, Any]]:
+    def search_cards(
+        self, query: str, order: str = "released", unique: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Searches Scryfall cards matching the given syntax query."""
         if not query:
             return []
-        res = self._get("cards/search", params={"q": query, "order": order})
+        params: Dict[str, str] = {"q": query, "order": order}
+        if unique:
+            params["unique"] = unique
+        res = self._get("cards/search", params=params)
         if res and isinstance(res.get("data"), list):
             return res["data"]
         return []
@@ -257,6 +262,35 @@ class ScryfallClient:
 
         self._prints_cache[cache_key] = results
         return results
+
+    def get_card_prints_for_card(self, card: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Retrieves all versions/printings of a given card dictionary.
+
+        If Scryfall search returned only 1 card version, this method expands it to
+        all historical and alternate printings using its oracle_id or canonical name.
+        """
+        if not card or not isinstance(card, dict):
+            return []
+
+        oracle_id = card.get("oracle_id")
+        if oracle_id:
+            cache_key = (f"oracle:{oracle_id}", None)
+            if cache_key in self._prints_cache:
+                return self._prints_cache[cache_key]
+
+            prints = self.search_cards(f'oracle_id:"{oracle_id}" unique:prints')
+            if prints:
+                self._prints_cache[cache_key] = prints
+                return prints
+
+        name = card.get("name")
+        if name:
+            prints = self.get_card_prints(name)
+            if prints:
+                return prints
+
+        return [card]
+
 
 
 _default_client = ScryfallClient()
