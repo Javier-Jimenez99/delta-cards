@@ -6,6 +6,9 @@ from .client import (
     extract_scryfall_cardmarket_prices,
     fetch_scryfall_card_pricing,
 )
+from .price_guide import (
+    CardmarketPriceGuide,
+)
 from .vector_cache import (
     ScryfallVectorCache,
     get_default_scryfall_vector_cache,
@@ -25,6 +28,7 @@ __all__ = [
     "build_magic_cardmarket_url",
     "extract_scryfall_cardmarket_prices",
     "fetch_scryfall_card_pricing",
+    "CardmarketPriceGuide",
     "ScryfallVectorCache",
     "get_default_scryfall_vector_cache",
     "get_scryfall_image_url",

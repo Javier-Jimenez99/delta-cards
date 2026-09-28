@@ -37,6 +37,7 @@ def extract_scryfall_cardmarket_prices(
     card_data: Dict[str, Any],
     language: str = "es",
     is_foil: Optional[bool] = None,
+    price_guide: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Extracts Cardmarket product ID, direct URL, and EUR pricing from Scryfall card data.
 
@@ -44,6 +45,7 @@ def extract_scryfall_cardmarket_prices(
         card_data: Scryfall card JSON dictionary.
         language: Language code for URL building.
         is_foil: True if listing is foil, False if non-foil, None if unknown.
+        price_guide: Optional CardmarketPriceGuide instance. If None, uses singleton.
 
     Returns:
         Dict with keys: idProduct, url, prices (low, avg, trend, eur, eur_foil, eur_etched),
@@ -104,6 +106,38 @@ def extract_scryfall_cardmarket_prices(
     else:
         ref_price = eur_val if eur_val is not None else (eur_foil_val if eur_foil_val is not None else eur_etched_val)
 
+    # Query Cardmarket Price Guide for real low, avg, trend prices
+    guide_low = None
+    guide_avg = None
+    guide_trend = None
+
+    if cm_id is not None:
+        guide_instance = price_guide
+        if guide_instance is None:
+            try:
+                from .price_guide import CardmarketPriceGuide
+                guide_instance = CardmarketPriceGuide.get_instance(game="magic")
+            except Exception as exc:
+                logger.debug(f"Could not load CardmarketPriceGuide: {exc}")
+                guide_instance = None
+
+        if guide_instance is not None:
+            try:
+                cm_prices = guide_instance.get_prices(cm_id, is_foil=is_foil)
+                if cm_prices:
+                    guide_low = cm_prices.get("low")
+                    guide_avg = cm_prices.get("avg")
+                    guide_trend = cm_prices.get("trend")
+            except Exception as exc:
+                logger.debug(f"Error querying CardmarketPriceGuide for product {cm_id}: {exc}")
+
+    low_p = guide_low
+    avg_p = guide_avg if guide_avg is not None else ref_price
+    trend_p = guide_trend if guide_trend is not None else ref_price
+
+    if low_p is not None and avg_p is not None and low_p > avg_p:
+        low_p, avg_p = min(low_p, avg_p), max(low_p, avg_p)
+
     # Images
     image_uris = card_data.get("image_uris") or {}
     image_url = (
@@ -122,9 +156,9 @@ def extract_scryfall_cardmarket_prices(
         "idProduct": str(cm_id) if cm_id is not None else None,
         "url": cm_url,
         "prices": {
-            "low": ref_price,
-            "avg": ref_price,
-            "trend": ref_price,
+            "low": low_p,
+            "avg": avg_p,
+            "trend": trend_p,
             "eur": eur_val,
             "eur_foil": eur_foil_val,
             "eur_etched": eur_etched_val,

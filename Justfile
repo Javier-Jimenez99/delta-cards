@@ -23,16 +23,16 @@ default:
 [group("services")]
 restart-services:
     @echo "🔄 Restarting Delta Cards systemd services..."
-    sudo systemctl restart delta-cards-assign.service delta-cards-alerts.service delta-cards-scrape.timer
+    sudo systemctl restart delta-cards-assign.service delta-cards-alerts.service delta-cards-scrape.timer delta-cards-catalogs.timer
     @echo "✅ Services restarted successfully:"
-    @sudo systemctl --no-pager status delta-cards-assign.service delta-cards-alerts.service delta-cards-scrape.timer | grep -E "●|Active:"
+    @sudo systemctl --no-pager status delta-cards-assign.service delta-cards-alerts.service delta-cards-scrape.timer delta-cards-catalogs.timer | grep -E "●|Active:"
 
 alias restart := restart-services
 
 # Show current status of all systemd services and timer
 [group("services")]
 status-services:
-    sudo systemctl --no-pager status delta-cards-assign.service delta-cards-alerts.service delta-cards-scrape.timer
+    sudo systemctl --no-pager status delta-cards-assign.service delta-cards-alerts.service delta-cards-scrape.timer delta-cards-catalogs.timer
 
 alias status := status-services
 
@@ -113,12 +113,12 @@ install-services:
 # Enable all systemd services and timer to launch at system boot
 [group("services")]
 enable-services:
-    sudo systemctl enable delta-cards-assign.service delta-cards-alerts.service delta-cards-scrape.timer
+    sudo systemctl enable delta-cards-assign.service delta-cards-alerts.service delta-cards-scrape.timer delta-cards-catalogs.timer
 
 # Disable all systemd services and timer from auto-starting at boot
 [group("services")]
 disable-services:
-    sudo systemctl disable delta-cards-assign.service delta-cards-alerts.service delta-cards-scrape.timer
+    sudo systemctl disable delta-cards-assign.service delta-cards-alerts.service delta-cards-scrape.timer delta-cards-catalogs.timer
 
 # ------------------------------------------------------------------------------
 # Scraping Workflows
@@ -231,6 +231,17 @@ build-index:
 [group("evaluation")]
 sync-catalog:
     uv run delta-cards sync-catalog
+
+# ------------------------------------------------------------------------------
+# Cardmarket Catalogs (Magic & Pokémon)
+# ------------------------------------------------------------------------------
+
+# Download official Cardmarket price guides & product lists, and rebuild nonsingles CSVs (game: all, magic, pokemon)
+[group("catalogs")]
+download-catalogs game="all":
+    uv run delta-cards download-catalogs --game {{game}}
+
+alias update-catalogs := download-catalogs
 
 # ------------------------------------------------------------------------------
 # Database Migrations (Alembic)

@@ -45,7 +45,16 @@
     "Display scellé collector",
     "Display scelle collector",
     "Display collector",
-    "Collector booster box sigillato"
+    "Collector booster box sigillato",
+    "Display de 12 Boosters",
+    "Display 12 Boosters",
+    "Display de 12 sobres",
+    "Display 12 sobres",
+    "Caja de 12 sobres",
+    "Caja 12 sobres",
+    "Display 12 buste",
+    "Display di 12 buste",
+    "Display 12"
   ],
   "Play Booster Box": [
     "Play Booster Box",
@@ -167,7 +176,13 @@
     "Commander",
     "Mazzo Commander",
     "Commander Deck Sealed",
-    "Commander Deck Precintado"
+    "Commander Deck Precintado",
+    "Mazo MTG",
+    "Mazo Magic",
+    "Mazos MTG",
+    "Mazos Magic",
+    "Mazzo MTG",
+    "Mazzi MTG"
   ],
   "Commander Deck Set": [
     "Commander Decks Set",
@@ -324,10 +339,13 @@
     "Single",
     "Singles",
     "100 carte",
-    "Carte magic",
-    "Carte",
-    "Carta",
-    "Cards",
+    "Solo carta",
+    "Solo carte",
+    "Solo cards",
+    "Giant Display",
+    "Cartón pluma",
+    "Carton pluma",
+    "Standee",
     "Carpeta",
     "Binder",
     "Fundas",
@@ -1461,5 +1479,82 @@
     "Lorehold Legacies",
     "Sapientium",
     "Sapiéntium"
+  ],
+  "The Fantastic Four": [
+    "The Fantastic Four",
+    "Fantastic Four",
+    "Fantastic 4",
+    "Los 4 Fantásticos",
+    "Los 4 Fantasticos",
+    "Los Cuatro Fantásticos",
+    "Los Cuatro Fantasticos"
+  ],
+  "Doom Prevails": [
+    "Doom Prevails",
+    "Dr. Doom",
+    "Doctor Doom"
+  ],
+  "Avengers Assemble": [
+    "Avengers Assemble",
+    "Avengers",
+    "Vengadores"
+  ],
+  "Wakanda Forever": [
+    "Wakanda Forever",
+    "Wakanda"
+  ],
+  "The Last Ronin": [
+    "The Last Ronin",
+    "Last Ronin",
+    "El último Ronin",
+    "El ultimo Ronin"
+  ],
+  "Hatsune Miku": [
+    "Hatsune Miku",
+    "Miku",
+    "Sakura Superstar",
+    "Digital Sensation",
+    "Electric Entourage",
+    "Winter Diva"
+  ],
+  "Virtue and Valor": [
+    "Virtue and Valor",
+    "Virtud y Valor",
+    "Virtue & Valor",
+    "Virtud & Valor"
+  ],
+  "Desert Bloom": [
+    "Desert Bloom",
+    "Floración del desierto",
+    "Floracion del desierto",
+    "Desierto Floreciente",
+    "Desierto floreciente"
+  ],
+  "The Hosts of Mordor": [
+    "The Hosts of Mordor",
+    "Hosts of Mordor",
+    "Huestes de Mordor",
+    "Las Huestes de Mordor"
+  ],
+  "Food and Fellowship": [
+    "Food and Fellowship",
+    "Comida y Comunidad",
+    "Food & Fellowship",
+    "Comida & Comunidad"
+  ],
+  "Riders of Rohan": [
+    "Riders of Rohan",
+    "Jinetes de Rohan"
+  ],
+  "Elven Council": [
+    "Elven Council",
+    "Concilio Élfico",
+    "Concilio Elfico"
+  ],
+  "Crack the Plates": [
+    "Crack the Plates"
+  ],
+  "Treasures of Smaug": [
+    "Treasures of Smaug"
   ]
 }

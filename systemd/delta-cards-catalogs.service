@@ -1,0 +1,17 @@
+[Unit]
+Description=Delta Cards - Daily Cardmarket Catalog Downloader & Synchronizer (Magic & Pokémon)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/delta-cards
+Environment="PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/local/bin/uv run delta-cards download-catalogs --game all
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

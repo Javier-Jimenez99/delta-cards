@@ -212,20 +212,26 @@ class AlertTemplateManager:
         price_val = getattr(offer, "price", None)
         price_str = f"{price_val:.2f} €" if price_val is not None else "N/A"
 
-        avg_p = getattr(offer, "cardmarket_avg_price", None)
-        if avg_p is None and result:
-            avg_p = getattr(result, "market_price", None)
-        if avg_p is None:
-            avg_p = getattr(offer, "cardmarket_low_price", None)
-        avg_str = f"{avg_p:.2f} €" if avg_p is not None else "N/A"
-
-        low_p = getattr(offer, "cardmarket_low_price", None)
-        low_str = f"{low_p:.2f} €" if low_p is not None else "N/A"
-
         trend_p = getattr(offer, "cardmarket_trend_price", None)
-        trend_str = f"{trend_p:.2f} €" if trend_p is not None else "N/A"
+        avg_p = getattr(offer, "cardmarket_avg_price", None)
+        low_p = getattr(offer, "cardmarket_low_price", None)
 
+        # Primary reference market price: prioritize trend price, fallback to avg_price or result.market_price
         ref_market_p = trend_p if trend_p is not None else avg_p
+        if ref_market_p is None and result:
+            ref_market_p = getattr(result, "market_price", None)
+
+        # For display: avg_price displays the market reference price
+        display_avg = ref_market_p
+        display_low = low_p
+
+        # Enforce that minimum price is never greater than average price
+        if display_low is not None and display_avg is not None and display_low > display_avg:
+            display_low, display_avg = min(display_low, display_avg), max(display_low, display_avg)
+
+        avg_str = f"{display_avg:.2f} €" if display_avg is not None else "N/A"
+        low_str = f"{display_low:.2f} €" if display_low is not None else "N/A"
+        trend_str = f"{trend_p:.2f} €" if trend_p is not None else "N/A"
         market_str = f"{ref_market_p:.2f} €" if ref_market_p is not None else avg_str
 
         # Savings / Discounts

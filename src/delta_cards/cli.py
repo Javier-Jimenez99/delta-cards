@@ -191,6 +191,24 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument("--cache-dir", default="data/images_cache", help="Image cache directory")
     sync_parser.add_argument("--concurrency", type=int, default=16, help="Async download concurrency")
 
+    # 7. download-catalogs subcommand: download official Cardmarket bulk catalogs for Magic and Pokemon
+    cat_parser = subparsers.add_parser(
+        "download-catalogs",
+        parents=[common_parser],
+        help="Download official Cardmarket bulk catalog files and update CSVs for Magic and Pokemon",
+    )
+    cat_parser.add_argument(
+        "--game",
+        choices=["all", "magic", "pokemon"],
+        default="all",
+        help="Game catalog to download and update (default: all)",
+    )
+    cat_parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Directory to save catalogs (default: data/catalogs)",
+    )
+
     return parser
 
 
@@ -1381,6 +1399,47 @@ def run_alerts(args: argparse.Namespace, config) -> None:
     worker.run_loop(interval_seconds=interval, once=is_once)
 
 
+def run_download_catalogs(args: argparse.Namespace, config: Any) -> None:
+    """Downloads official Cardmarket catalogs for Magic and/or Pokemon and updates CSVs."""
+    from .catalog_downloader import download_game_catalog
+    from pathlib import Path
+
+    base_dir = Path(args.output_dir) if getattr(args, "output_dir", None) else None
+    game_arg = getattr(args, "game", "all").lower()
+
+    games = ["pokemon", "magic"] if game_arg == "all" else [game_arg]
+
+    console.print(
+        Panel.fit(
+            f"[bold cyan]Delta Cards - Cardmarket Catalog Synchronizer[/bold cyan]\n"
+            f"[dim]Downloading official price guides & non-singles product lists from S3[/dim]\n"
+            f"[yellow]Target Games:[/] {', '.join(g.upper() for g in games)}\n"
+            f"[yellow]Catalogs Directory:[/] {base_dir or 'data/catalogs'}",
+            title="📦 Cardmarket Catalogs",
+            border_style="cyan",
+        )
+    )
+
+    try:
+        results = []
+        for g in games:
+            with console.status(f"[bold green]Downloading and synchronizing {g.upper()} catalog...[/bold green]"):
+                res = download_game_catalog(g, base_dir=base_dir)
+                results.append(res)
+
+        console.print("\n[bold green]✓ All requested catalogs downloaded and updated successfully:[/bold green]")
+        for r in results:
+            console.print(
+                f"  • [cyan]{r['game'].upper()}[/cyan]: "
+                f"Price Guide ({r['price_guide_bytes'] / (1024*1024):.1f} MB) | "
+                f"Products ({r['products_bytes'] / (1024*1024):.1f} MB) | "
+                f"CSV rows: [bold]{r['csv_rows']}[/bold]"
+            )
+    except Exception as exc:
+        console.print(f"[bold red]❌ Failed to download catalogs: {exc}[/bold red]")
+        sys.exit(1)
+
+
 def main() -> None:
     args = parse_args()
     setup_logging(args.verbose)
@@ -1391,6 +1450,8 @@ def main() -> None:
         run_export_models(args, None)
     elif args.subcommand == "sync-catalog":
         run_sync_catalog(args, None)
+    elif args.subcommand == "download-catalogs":
+        run_download_catalogs(args, None)
     else:
         config = load_and_filter_config(args)
         if args.subcommand == "scrape":

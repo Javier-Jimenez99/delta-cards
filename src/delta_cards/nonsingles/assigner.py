@@ -284,6 +284,24 @@ class NonSinglesMatcher:
             )
             return unique_entities, []
 
+        # Precedence filter for detected formats:
+        # If a display/box, bundle, or commander deck format is detected, loose booster packs
+        # must not pollute allowed categories (e.g. "Display de 12 Boosters", "Caja 36 sobres", "Bundle 9 sobres")
+        box_display_formats = {
+            "Booster Box", "Collector Booster Box", "Play Booster Box",
+            "Draft Booster Box", "Set Booster Box", "Jumpstart Display",
+        }
+        pack_formats = {"Booster", "Collector Booster", "Play Booster", "Draft Booster", "Set Booster"}
+        bundle_formats = {"Bundle", "Gift Bundle"}
+        deck_formats = {"Commander Deck", "Commander Deck Set", "Commander Display"}
+
+        if (
+            any(f in detected_formats for f in box_display_formats)
+            or any(f in detected_formats for f in bundle_formats)
+            or any(f in detected_formats for f in deck_formats)
+        ):
+            detected_formats = [f for f in detected_formats if f not in pack_formats]
+
         allowed_categories: Set[str] = set()
         for fmt in detected_formats:
             allowed_categories.update(self.format_to_categories[fmt])
@@ -336,22 +354,36 @@ class NonSinglesMatcher:
             if not has_bundle_signal and "bundle" in cand_name_lower and any(b in title_lower for b in ["booster box", "display", "36 sobres", "36 buste"]):
                 continue
 
-            # Disambiguation 3: Individual Commander Deck vs Commander Deck Set (Display of 4+ decks)
-            is_commander_deck = "Commander Deck" in detected_formats or any("commander" in e.lower() for e in unique_entities)
-            if is_commander_deck:
-                has_deck_set_signal = any(
-                    s in title_lower
-                    for s in [
-                        "deck set", "set de mazos", "todos los mazos", "4 mazos", "5 mazos",
-                        "pack 4", "pack de 4", "4x", "4 decks", "5 decks", "all 4", "all 5",
-                        "coleccion completa", "colección completa",
-                        "display de commander", "commander display", "deck display"
-                    ]
-                ) or "Commander Deck Set" in detected_formats or "Commander Display" in detected_formats
-                if not has_deck_set_signal and ("deck set" in cand_name_lower or "display" in cand_name_lower):
-                    continue
-                if has_deck_set_signal and "deck set" not in cand_name_lower and "display" not in cand_name_lower:
-                    continue
+            # Disambiguation 3: Individual items vs Multi-item Displays / Sets / Complete Sets
+            # Guard against single Commander decks, scene boxes, or Secret Lair drops matching
+            # full deck sets, scene box sets, or complete factory sets (: Full Set, : Mythic Set, : Rare Set)
+            is_multi_item_cand = (
+                "deck set" in cand_name_lower
+                or "scene box set" in cand_name_lower
+                or ": full set" in cand_name_lower
+                or cand_name_lower.endswith(" full set")
+                or ": mythic set" in cand_name_lower
+                or ": rare set" in cand_name_lower
+                or ": common set" in cand_name_lower
+                or ": uncommon set" in cand_name_lower
+                or (cat in ("Magic Theme Deck Display", "MtG Set") and ("display" in cand_name_lower or ("set" in cand_name_lower and not any(k in cand_name_lower for k in ["starter set", "prerelease"]))))
+            )
+            has_multi_set_signal = any(
+                s in title_lower
+                for s in [
+                    "deck set", "set de mazos", "todos los mazos", "4 mazos", "5 mazos",
+                    "pack 4", "pack de 4", "4x", "4 decks", "5 decks", "all 4", "all 5",
+                    "coleccion completa", "colección completa", "display de commander",
+                    "commander display", "deck display", "full set", "complete set",
+                    "set completo", "todas las cartas", "mythic set", "rare set",
+                    "scene box set", "set de scene box", "4 scene boxes", "4 scene box"
+                ]
+            ) or "Commander Deck Set" in detected_formats or "Commander Display" in detected_formats
+
+            if not has_multi_set_signal and is_multi_item_cand:
+                continue
+            if has_multi_set_signal and not is_multi_item_cand:
+                continue
 
             # Disambiguation 4: Cross-set collision guard (e.g. Shining Fates having no Booster Box matching Shining Darkness)
             # If multi-word set/character entities were extracted, ensure distinguishing tokens match candidate
@@ -379,14 +411,26 @@ class NonSinglesMatcher:
                     continue
 
             row = self.df_catalog.iloc[idx]
+            trend_val = float(row["trend"]) if pd.notna(row.get("trend")) else None
+            avg_val = float(row["avg"]) if pd.notna(row.get("avg")) else None
+            low_val = float(row["low"]) if pd.notna(row.get("low")) else None
+
+            # Enforce low <= avg: Cardmarket's low is active asking price while avg is historical sales.
+            # If low > avg, the lower price is the true minimum transaction/historical floor,
+            # and the higher price is the current market value / ceiling.
+            if low_val is not None and avg_val is not None and low_val > avg_val:
+                all_prices = [p for p in (low_val, avg_val, trend_val) if p is not None]
+                low_val = min(all_prices)
+                avg_val = max(all_prices)
+
             results.append(
                 {
                     "idProduct": int(row["idProduct"]),
                     "name": cand_name,
                     "categoryName": cat,
-                    "trendPrice": float(row["trend"]) if pd.notna(row.get("trend")) else None,
-                    "avgPrice": float(row["avg"]) if pd.notna(row.get("avg")) else None,
-                    "lowPrice": float(row["low"]) if pd.notna(row.get("low")) else None,
+                    "trendPrice": trend_val,
+                    "avgPrice": avg_val,
+                    "lowPrice": low_val,
                     "score": round(score, 4),
                 }
             )

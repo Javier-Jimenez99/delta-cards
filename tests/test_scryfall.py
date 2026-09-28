@@ -14,6 +14,7 @@ from delta_cards.scryfall.client import (
     extract_scryfall_cardmarket_prices,
     fetch_scryfall_card_pricing,
 )
+from delta_cards.scryfall.price_guide import CardmarketPriceGuide
 from delta_cards.scryfall.vector_cache import (
     ScryfallVectorCache,
     get_scryfall_image_url,
@@ -67,8 +68,8 @@ def test_extract_scryfall_cardmarket_prices():
     assert result["url"] == "https://www.cardmarket.com/en/Magic/Products?idProduct=892161&referrer=scryfall"
     assert result["prices"]["eur"] == 2.03
     assert result["prices"]["eur_foil"] == 1.86
-    assert result["prices"]["avg"] == 2.03
-    assert result["prices"]["low"] == 2.03
+    assert result["prices"]["avg"] in (1.92, 2.03)
+    assert result["prices"]["low"] in (0.6, 2.03)
     assert result["name"] == "Lightning Bolt"
     assert result["set"] == "msc"
     assert result["collector_number"] == "806"
@@ -434,7 +435,7 @@ def test_resolve_scryfall_card_version_aware_e2e():
     assert result is not None
     assert result["idProduct"] == "716083"
     assert result["collector_number"] == "451"
-    assert result["prices"]["avg"] == 92.86  # eur_foil picked because listing is foil
+    assert result["prices"]["avg"] in (84.98, 92.86)  # eur_foil or guide avg depending on guide presence
 
 
 def test_scryfall_vector_cache_save_and_load():
@@ -772,5 +773,137 @@ def test_real_dinov3_embedder_with_vector_cache():
         # Cosine similarity between two unit vectors
         sim = float(np.dot(vec1, vec2))
         assert -1.0 <= sim <= 1.0
+
+
+def test_cardmarket_price_guide_synthetic():
+    """Verify CardmarketPriceGuide indexes JSON catalogs and returns separate low, avg, and trend prices."""
+    import json
+    from pathlib import Path
+
+    sample_catalog = {
+        "version": 1,
+        "createdAt": "2026-09-18T02:49:26+0200",
+        "priceGuides": [
+            {
+                "idProduct": 1001,
+                "idCategory": 1,
+                "avg": 4.50,
+                "low": 1.20,
+                "trend": 4.10,
+                "avg-foil": 12.00,
+                "low-foil": 5.50,
+                "trend-foil": 11.50,
+            },
+            {
+                "idProduct": 1002,
+                "idCategory": 1,
+                "avg": 0.80,
+                "low": 0.15,
+                "trend": 0.75,
+                "avg-foil": None,
+                "low-foil": None,
+                "trend-foil": None,
+            },
+        ],
+    }
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cat_file = Path(tmpdir) / "price_guide.json"
+        cat_file.write_text(json.dumps(sample_catalog), encoding="utf-8")
+
+        guide = CardmarketPriceGuide(game="magic", catalog_path=cat_file)
+
+        # 1. Non-foil query
+        p_regular = guide.get_prices("1001", is_foil=False)
+        assert p_regular is not None
+        assert p_regular["low"] == 1.20
+        assert p_regular["avg"] == 4.50
+        assert p_regular["trend"] == 4.10
+        assert p_regular["low"] != p_regular["avg"]
+
+        # 2. Foil query
+        p_foil = guide.get_prices("1001", is_foil=True)
+        assert p_foil is not None
+        assert p_foil["low"] == 5.50
+        assert p_foil["avg"] == 12.00
+        assert p_foil["trend"] == 11.50
+        assert p_foil["low"] != p_foil["avg"]
+
+        # 3. Fallback when foil is None
+        p_foil_fallback = guide.get_prices("1002", is_foil=True)
+        assert p_foil_fallback is not None
+        assert p_foil_fallback["low"] == 0.15
+        assert p_foil_fallback["avg"] == 0.80
+
+        # 4. Unknown product returns None
+        assert guide.get_prices("999999") is None
+
+
+def test_extract_scryfall_cardmarket_prices_with_price_guide():
+    """Verify that extract_scryfall_cardmarket_prices uses CardmarketPriceGuide to yield distinct low and avg prices."""
+    import json
+    from pathlib import Path
+
+    sample_catalog = {
+        "version": 1,
+        "priceGuides": [
+            {
+                "idProduct": 718300,
+                "idCategory": 1,
+                "avg": 95.00,
+                "low": 72.50,
+                "trend": 91.00,
+                "avg-foil": 180.00,
+                "low-foil": 140.00,
+                "trend-foil": 175.00,
+            }
+        ],
+    }
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cat_file = Path(tmpdir) / "price_guide.json"
+        cat_file.write_text(json.dumps(sample_catalog), encoding="utf-8")
+        guide = CardmarketPriceGuide(game="magic", catalog_path=cat_file)
+
+        card_data = {
+            "name": "The One Ring",
+            "cardmarket_id": 718300,
+            "prices": {"eur": "90.00", "eur_foil": "170.00"},
+            "purchase_uris": {"cardmarket": "https://www.cardmarket.com/es/Magic/Products?idProduct=718300"},
+        }
+
+        # Regular non-foil
+        res_regular = extract_scryfall_cardmarket_prices(
+            card_data, language="es", is_foil=False, price_guide=guide
+        )
+        assert res_regular["prices"]["avg"] == 95.00
+        assert res_regular["prices"]["low"] == 72.50
+        assert res_regular["prices"]["trend"] == 91.00
+        assert res_regular["prices"]["avg"] != res_regular["prices"]["low"]
+
+        # Foil
+        res_foil = extract_scryfall_cardmarket_prices(
+            card_data, language="es", is_foil=True, price_guide=guide
+        )
+        assert res_foil["prices"]["avg"] == 180.00
+        assert res_foil["prices"]["low"] == 140.00
+        assert res_foil["prices"]["trend"] == 175.00
+        assert res_foil["prices"]["avg"] != res_foil["prices"]["low"]
+
+
+def test_real_magic_price_guide_loaded():
+    """Verify that the official Magic price guide on disk correctly yields distinct low and avg prices."""
+    guide = CardmarketPriceGuide.get_instance(game="magic")
+    if not guide.catalog_path.exists():
+        pytest.skip("Magic price guide not available on disk")
+
+    # Product ID 4 is in the catalog
+    prices = guide.get_prices(4)
+    assert prices is not None
+    assert prices["low"] is not None and prices["low"] > 0
+    assert prices["avg"] is not None and prices["avg"] > 0
+    assert prices["trend"] is not None and prices["trend"] > 0
+    assert prices["low"] <= prices["avg"]
+
 
 

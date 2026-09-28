@@ -1,0 +1,11 @@
+[Unit]
+Description=Delta Cards - Daily Cardmarket Catalog Downloader Timer
+After=network-online.target
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
