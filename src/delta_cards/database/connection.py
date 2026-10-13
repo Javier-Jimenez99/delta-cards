@@ -1,10 +1,17 @@
 """Database connection and session management for delta-cards."""
 
 from contextlib import contextmanager
+import logging
+from pathlib import Path
 from typing import Generator, Optional
-from sqlmodel import Session, SQLModel, create_engine
+
+from sqlalchemy import event, inspect, text
 from sqlalchemy.engine import Engine
+from sqlmodel import Session, SQLModel, create_engine
+
 from ..settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_DATABASE_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/delta_cards"
 
@@ -22,10 +29,6 @@ def get_db_url(db_url: Optional[str] = None) -> str:
     """Resolves database URL from argument or centralized application settings."""
     raw_url = db_url or get_settings().database_url or DEFAULT_DATABASE_URL
     return normalize_db_url(raw_url)
-
-
-from pathlib import Path
-from sqlalchemy import event
 
 
 def get_engine(db_url: Optional[str] = None, echo: bool = False) -> Engine:
@@ -58,12 +61,6 @@ def get_session(engine: Optional[Engine] = None) -> Generator[Session, None, Non
     eng = engine or get_engine()
     with Session(eng) as session:
         yield session
-
-
-import logging
-from sqlalchemy import event, inspect, text
-
-logger = logging.getLogger(__name__)
 
 
 def init_db(engine: Optional[Engine] = None) -> None:

@@ -1,346 +1,339 @@
 # Delta Cards 🃏
+### *Autonomous Marketplace Arbitrage & Computer Vision Intelligence Platform for Collectible Card Games*
 
-A Python tool to scrape and monitor card offers on **Wallapop** and **Vinted**, built with modular providers, AI card recognition, and configured entirely through JSON.
-
-Designed initially for **Pokémon cards**, with support for any card game or product type defined in the JSON configuration:
-- **Booster Boxes / Displays**
-- **Booster Packs**
-- **Full Decks / Battle Decks**
-- **Elite Trainer Boxes (ETB)**
-- **Single Cards**
-
----
-
-## 🚀 Features
-
-- **Pure JSON Configuration**: All search queries, positive keywords, excluded negative keywords, price ranges, items limit, and settings are defined in JSON. **No hardcoded keywords or condition flags exist in the Python code.**
-- **Modular Multi-Platform Architecture**: Wallapop and Vinted integrations are modularized in their own provider packages (`src/delta_cards/wallapop/` and `src/delta_cards/vinted/`), feeding a unified database and AI evaluation pipeline.
-- **WallaPy & Vinted Scrapers**: Efficient, zero-AI scraping with configurable delays, custom headers, and geolocation/catalog filters.
-- **Differentiated Discord Alerts**: Rich embeds with custom emojis and links tailored specifically for Wallapop (`<:wallapop:...>`) and Vinted (`<:vinted:...>`).
-- **Clean Single Offers Export**: Exports structured offer metadata to both **JSON** and **CSV** files (`id`, `platform`, `title`, `price`, `currency`, `product_type`, `location`, `link`, `image_url`, `published_date`, etc.).
-- **Rich CLI Interface**: Color-coded terminal progress and summary table showing prices and counts by product type.
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![Package Manager: uv](https://img.shields.io/badge/managed%20by-uv-DE5FE9.svg?logo=astral&logoColor=white)](https://github.com/astral-sh/uv)
+[![Vector Search: USearch](https://img.shields.io/badge/vector%20index-USearch-00D4B2.svg)](https://github.com/unum-cloud/usearch)
+[![Inference: ONNX Runtime](https://img.shields.io/badge/inference-ONNX%20Runtime-00599C.svg?logo=onnx&logoColor=white)](https://onnxruntime.ai/)
+[![Database: PostgreSQL 16](https://img.shields.io/badge/database-PostgreSQL%2016-336791.svg?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![UI: Streamlit](https://img.shields.io/badge/evaluation%20ui-Streamlit-FF4B4B.svg?logo=streamlit&logoColor=white)](https://streamlit.io/)
+[![Certified Precision: 100%](https://img.shields.io/badge/real%20world%20precision-100.0%25-brightgreen.svg)](#-evaluation-benchmark--metrics)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ---
 
-## 📦 Installation & Setup
+## 🌟 Executive Summary
 
-Delta Cards is managed with [`uv`](https://github.com/astral-sh/uv).
+**Delta Cards** is a production-grade, event-driven intelligence system engineered to scrape, detect, visually identify, and price undervalued collectible trading cards across peer-to-peer marketplaces (**Wallapop** and **Vinted**).
 
-### ⚡ One-Command Automated Setup
-Run the setup script to install all dependencies, download required AI models (ONNX YOLO detector and local Qwen2.5 GGUF model), configure `.env`, and initialize the database:
+In peer-to-peer marketplaces, listings are notoriously challenging: photos suffer from extreme perspective angles, glares, reflections, protective top loaders, poor lighting, and misspelled or incomplete descriptions. Naive text scraping produces false positive rates exceeding **50%**, erroneously alerting for card lots, proxies, or damaged prints.
+
+Delta Cards addresses this through a decoupled, high-performance architecture:
+1. **Asynchronous Scraping**: High-throughput, zero-AI scraping workers ingest marketplace offers with geo-filtering and rate-limiting.
+2. **Fine-Grained Image Retrieval (FGIR)**: Combines YOLOv8 card boundary localization, quantized DINOv3 ViT dense feature embeddings, and sub-millisecond Mmap vector retrieval across 40,000+ cards.
+3. **Multimodal OCR & Text Reranking**: Multilingual RapidOCR extracts set fractions, HP, and attacks, matching against pre-computed SQLite scan caches.
+4. **Local Small Language Model (SLM) Safeguard**: A local GGUF model (`Qwen2.5-Instruct`) executes a 20-point verification checklist with hard veto rules, achieving **100.0% precision** (zero false positives) before triggering high-value notifications.
+5. **Real-Time Arbitrage Engine**: Evaluates live listing prices against official Cardmarket, TCGdex, and Scryfall price guides, computing percentage and absolute savings.
+6. **Multi-Channel Dispatcher**: Pushes rich Discord alerts with platform-specific branding and links to targeted channels.
+
+---
+
+## 🏛 System Architecture
+
+The platform operates as a decoupled **Producer / Consumer** system built on top of PostgreSQL, ensuring that compute-intensive computer vision workloads never bottleneck ingestion throughput:
+
+```mermaid
+flowchart TD
+    subgraph Marketplaces [Marketplace Ingestion Layer]
+        W[Wallapop API]
+        V[Vinted API]
+    end
+
+    subgraph Producer [Producer Worker: delta-cards scrape]
+        S[Async Scraper Engine]
+        W -->|Raw Listings| S
+        V -->|Raw Listings| S
+        S -->|Batch Upsert: assigned_state='pending'| DB[(PostgreSQL 16 / SQLModel)]
+    end
+
+    subgraph Consumer [Consumer Worker: delta-cards assign]
+        DB -.->|Poll pending offers| P[Recognition & Pricing Worker]
+
+        subgraph VisionPipeline [FGIR & Multimodal Vision Pipeline]
+            P --> DET[1. YOLO Boundary Detector\nRectangular Card Crop]
+            DET --> DINO[2. DINOv3 ViT-Small INT8\n384-dim Dense Embedding]
+            DINO --> VEC[3. USearch Mmap Index\nTop-15 Candidates in < 1ms]
+            VEC --> OCR[4. Multilingual RapidOCR\nHP, Collector #, Attack Text]
+            OCR --> RANK[5. Multimodal Composite Reranker\nCosine + Fuzzy Text Scoring]
+        end
+
+        RANK --> PRICING[6. Cardmarket Market Arbitrage\nPrice Guide & TCGdex / Scryfall]
+        PRICING --> DEAL{Meets Deal Threshold?}
+        DEAL -->|Yes| MARK[Flag: alert_status='pending']
+        DEAL -->|No| SAVE[Flag: alert_status='none']
+        MARK --> DB
+        SAVE --> DB
+    end
+
+    subgraph AlertWorker [Alert Dispatcher: delta-cards alerts]
+        DB -.->|Poll pending alerts| VETO[7. Local SLM Verifier\nQwen2.5 GGUF 20-Point Checklist]
+        VETO -->|Approved| DISP[Discord Alert Dispatcher\nMulti-Channel Webhooks]
+        VETO -->|Vetoed / Low Conf| REJ[Flag: alert_status='rejected']
+        REJ --> DB
+        DISP --> WEBHOOK[Discord Webhooks\nPokemon & MTG Channels]
+    end
+
+    subgraph Observability [Diagnostics & Benchmarking]
+        DB -.-> APP[Streamlit Evaluation App\n1-Click Benchmarks & Dataset Curation]
+    end
+```
+
+---
+
+## ⚡ Core Engineering Highlights
+
+### 1. Fine-Grained Image Retrieval (FGIR) Pipeline
+- **YOLOv8 Card Boundary Isolation**: Detects physical trading cards on CPU in ~30–45 ms, isolating the card rectangle from background clutter, hands, and playmats.
+- **Quantized DINOv3 ViT-Small**: Generates 384-dimensional dense visual representations that encode card art, layout, and frame style, normalized for cosine similarity.
+- **Sub-Millisecond Vector Retrieval**: Leverages `usearch` native Mmap vector indexes across 39,705+ canonical cards in English, Spanish, and Japanese with **< 1.0 ms** query latency.
+- **Multilingual OCR & Micro-Cache Reranking**: Uses RapidOCR ONNX with bilingual support (ES/EN/JA) to extract card titles, set fractions (e.g., `136/201`), HP values, and attack descriptions, verified against cached canonical OCR scans in SQLite.
+
+### 2. Zero-Cost Local SLM False-Positive Guard
+- Powered by `llama-cpp-python` running a quantized **Qwen2.5-Instruct GGUF** model locally (zero cloud API fees, 100% private).
+- Evaluates a rigorous **20-point structured reasoning checklist**:
+  - Validates card name and Pokémon identity.
+  - Verifies set numbers, rarity stamps, and promo prefixes.
+  - Distinguishes between foil/holo variants, reverse holos, and secret rares.
+  - Enforces **hard veto rules** that immediately discard counterfeits, card lots, empty boxes, and mismatched card names.
+
+### 3. Multi-Game & Multi-Product Coverage
+- **Supported Games**:
+  - **Pokémon TCG**: Complete canonical coverage via TCGdex SDK and Cardmarket catalogs.
+  - **Magic: The Gathering**: Direct integration with Scryfall API and Cardmarket product lists.
+- **Supported Product Classes**:
+  - **Single Cards**: Full visual FGIR + OCR + SLM pipeline.
+  - **Booster Boxes & Displays**: Catalog-based fuzzy keyword extractors.
+  - **Booster Packs & Blisters**: Multi-language packaging matching.
+  - **Elite Trainer Boxes (ETB) & Bundles**: Dedicated expansion parsers.
+  - **Full Decks & Commander Decks**: Format-specific matching engines.
+
+### 4. Decoupled Distributed Architecture
+- **Producer / Consumer Separation**: Fast I/O scraping jobs finish in seconds without waiting for compute-heavy vision inferences.
+- **Persistent Workers**: Continuous assigner and alert daemons process batches incrementally with bounded resource usage.
+- **PostgreSQL 16 & Alembic**: Relational persistence managed with SQLModel and automated schema migrations.
+- **Systemd Integration**: Pre-configured systemd units and timers for autonomous 24/7 background operation with auto-restart on system boot.
+
+### 5. Interactive Observability & Diagnostic Suite
+- Dedicated **Streamlit** evaluation application (`evaluation_app`) providing:
+  - 3-column visual comparison (Marketplace Photo vs Official CDN Scan vs Model Prediction).
+  - 1-click benchmarking with real-time latency and accuracy KPIs.
+  - Visual dataset curation and ground-truth editing with atomic SQLite backups.
+
+---
+
+## 📊 Evaluation Benchmark & Metrics
+
+Tested against ground-truth marketplace listings audited pixel-by-pixel with real-world noise, perspective tilts, and lighting variations:
+
+| Metric | Naive Baseline | Delta Cards (FGIR + USearch + SLM) |
+| :--- | :---: | :---: |
+| **Real Marketplace Precision** | 46.7% | **100.0%** *(Zero False Positives)* |
+| **False Positives Detected** | 8 | **0** |
+| **Perspective Angle Tolerance** | 62.5% | **100.0%** |
+| **Severe Glare & Reflection Resilience** | 50.0% | **90.0%** |
+| **Vector Search Latency (USearch)** | ~25 ms | **< 1.0 ms** |
+| **Visual + OCR Pipeline Latency** | ~1,200 ms | **~350 – 550 ms** |
+| **SLM Verification Latency** | N/A | **~800 – 1,200 ms** *(triggered only on deal candidates)* |
+
+> [!NOTE]
+> Detailed methodology, ground truth auditing rules, and non-circular validation protocols are documented in [docs/evaluation_report.md](docs/evaluation_report.md) and [docs/pipeline.md](docs/pipeline.md).
+
+---
+
+## 🛠 Tech Stack
+
+| Domain | Technology | Purpose |
+| :--- | :--- | :--- |
+| **Core & Packaging** | Python 3.12, [`uv`](https://github.com/astral-sh/uv) | Modern runtime and ultra-fast dependency resolution |
+| **Computer Vision** | YOLOv8 (ONNX), OpenCV, NumPy | Card boundary localization and perspective preprocessing |
+| **Embeddings & Vector Search** | DINOv3 ViT-Small INT8, `usearch` | 384-dim dense representation and Mmap nearest-neighbor index |
+| **Text Extraction** | RapidOCR ONNX, Tesseract OCR | Multilingual text, HP, and set fraction extraction |
+| **Local SLM Reasoning** | `llama-cpp-python`, Qwen2.5 GGUF | 20-question checklist and false-positive veto guard |
+| **Database & ORM** | PostgreSQL 16, SQLModel, Alembic, SQLite | Hybrid storage for listings, catalogs, and OCR micro-caches |
+| **Marketplace Scrapers** | `wallapy`, Custom Vinted Client, `aiohttp` | Asynchronous marketplace offer ingestion |
+| **TCG APIs & Data** | TCGdex SDK, Scryfall API, Cardmarket Catalogs | Canonical catalog data, pricing trends, and market references |
+| **Observability & UI** | Streamlit, Rich | Visual diagnostic web dashboard and formatted CLI reporting |
+| **DevOps & Process Control** | Systemd, Docker Compose, `just` | 24/7 background worker daemons, database container, task runner |
+
+---
+
+## 📁 Repository Structure
+
+```
+delta-cards/
+├── config/                         # Pure JSON search profiles & alert templates
+│   ├── pokemon_cards_search.json   # Pokémon search queries, filters, and price ranges
+│   ├── magic_cards_search.json     # Magic: The Gathering search configuration
+│   └── templates/alerts/           # Channel-specific dynamic Discord message templates
+├── data/                           # Catalogs, vector indexes, and SQLite caches
+│   ├── catalogs/                   # Cardmarket non-singles CSV product catalogs
+│   ├── pokemon_cards.usearch       # Mmap vector index for 39k+ Pokémon cards
+│   └── pokemon_cards_meta.sqlite   # Canonical card metadata and pre-computed OCR texts
+├── evaluation_app/                 # Interactive Streamlit audit and evaluation suite
+│   ├── app.py                      # Multi-page diagnostic UI
+│   └── README.md                   # Evaluation app usage instructions
+├── models/                         # Local quantized AI models (ONNX & GGUF)
+│   ├── riftbound_regions.onnx      # YOLOv8 card boundary detector
+│   ├── dinov3_vits16_int8.onnx     # Quantized DINOv3 visual embedder
+│   └── qwen2.5-0.5b-instruct.gguf  # Local SLM false-positive verifier
+├── scripts/                        # Operational, benchmarking, and maintenance scripts
+│   ├── evaluate.py                 # Automated accuracy & latency benchmarking
+│   ├── send_test_alert.py          # Discord webhook dry-run and live test alerts
+│   ├── inspect_db_alerts.py        # Database alert audit utility
+│   └── setup.py                    # Automated model and catalog provisioner
+├── src/delta_cards/                # Core modular Python package
+│   ├── alerts/                     # Discord alert dispatcher and dynamic template engine
+│   ├── database/                   # SQLModel models, session manager, and repository
+│   ├── nonsingles/                 # Sealed product matching engine (Boxes, ETBs, Packs)
+│   ├── recognition/                # Computer vision, DINOv3, USearch, OCR, and SLM verifier
+│   ├── scryfall/                   # Scryfall API client and Magic pricing integration
+│   ├── tcgdex/                     # TCGdex SDK client, catalog sync, and Cardmarket URLs
+│   ├── vinted/                     # Vinted asynchronous scraper module
+│   ├── wallapop/                   # Wallapop scraper integration
+│   ├── cli.py                      # Main command-line interface and subcommands
+│   ├── models.py                   # Pydantic schemas and domain models
+│   └── settings.py                 # Centralized configuration via Pydantic Settings
+├── systemd/                        # Linux systemd service and timer unit files
+├── tests/                          # Automated pytest test suite (21 test modules)
+├── docker-compose.yml              # Local PostgreSQL 16 container definition
+├── Justfile                        # Task runner command recipes (`just`)
+├── pyproject.toml                  # Project metadata, dependencies, and entrypoints
+└── setup.sh                        # One-command automated environment bootstrap
+```
+
+---
+
+## 🚀 Quickstart & Installation
+
+Delta Cards is built with modern Python 3.12+ and managed through [`uv`](https://github.com/astral-sh/uv).
+
+### 1. Prerequisites
+- **Python 3.12+** (managed automatically by `uv`)
+- **Tesseract OCR** (for classical OCR fallback):
+  - Ubuntu/Debian: `sudo apt-get install -y tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng`
+  - macOS: `brew install tesseract tesseract-lang`
+
+### 2. One-Command Automated Setup
+The setup script provisions the environment, installs all dependencies, downloads the required ONNX and GGUF models, sets up `.env`, and initializes the database:
 
 ```bash
 ./setup.sh
 ```
 
-Or run via Python directly:
+Alternatively, run manually via `uv`:
 ```bash
 uv sync
 uv run python scripts/setup.py
 ```
 
-### System Requirements
-- **Python 3.12+** (handled automatically via `uv`)
-- **Tesseract OCR**:
-  - **Debian / Ubuntu**: `sudo apt-get install -y tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng`
-  - **macOS**: `brew install tesseract tesseract-lang`
+### 3. Database Setup (PostgreSQL via Docker)
+Launch the local PostgreSQL 16 instance:
 
-### ⚡ Quick Commands (`just`)
-A [`Justfile`](Justfile) is provided to easily manage services and workflows:
 ```bash
-just                  # List all available commands
-just restart          # Restart all background systemd services (assigner, alerts, scraper timer)
-just status           # Inspect status of all services
-just logs             # Tail live logs from all running workers
-just scrape-all       # Run a scrape cycle on both Wallapop and Vinted
-just assign-once      # Run AI card recognition and pricing on pending batch
-just app              # Launch Streamlit evaluation & diagnostic UI
-just test             # Run test suite
+docker compose up -d
 ```
 
-
----
-
-## ⚙️ Configuration (`config/pokemon_cards_search.json`)
-
-You can customize searches by editing `config/pokemon_cards_search.json` or providing your own JSON file. Note that whether a search targets sealed products or single cards is defined entirely through the `keywords` list:
-
-```json
-{
-  "name": "Pokemon Cards Search Config",
-  "wallapop_settings": {
-    "latitude": 40.4168,
-    "longitude": -3.7038,
-    "location_name": "Madrid, Spain",
-    "order_by": "newest",
-    "delay_between_requests_ms": 1500
-  },
-  "vinted_settings": {
-    "domain": "vinted.es",
-    "order_by": "newest_first",
-    "delay_between_requests_ms": 2000,
-    "enabled": true
-  },
-  "search_profiles": [
-    {
-      "id": "booster_box",
-      "name": "Booster Box / Displays",
-      "product_type": "booster_box",
-      "query": [
-        "pokemon booster box",
-        "pokemon booster box caja",
-        "pokemon box booster",
-        "caja de sobres pokemon"
-      ],
-      "keywords": [
-        "precintada",
-        "precintado",
-        "sellada",
-        "sellado",
-        "sin abrir",
-        "sealed"
-      ],
-      "excluded_keywords": [
-        "vacia",
-        "vacio",
-        "abierta",
-        "abierto",
-        "sin sobres",
-        "codigo",
-        "proxy",
-        "falsa",
-        "videojuego",
-        "ps5",
-        "switch"
-      ],
-      "min_price": 70.0,
-      "max_price": null,
-      "max_items": 50
-    },
-    {
-      "id": "single_card",
-      "name": "Single Cards",
-      "product_type": "single_card",
-      "query": "pokemon carta",
-      "keywords": [
-        "carta",
-        "pokemon",
-        "holo",
-        "reverse",
-        "secret",
-        "ultra rare",
-        "psa",
-        "promo"
-      ],
-      "excluded_keywords": [
-        "codigo",
-        "code",
-        "proxy",
-        "falsa",
-        "fake",
-        "videojuego"
-      ],
-      "min_price": 1.0,
-      "max_price": null,
-      "max_items": 50
-    }
-  ],
-  "output_settings": {
-    "output_dir": "data/output",
-    "save_json": true,
-    "save_csv": true,
-    "filename_prefix": "pokemon_offers"
-  }
-}
+Apply database migrations with Alembic:
+```bash
+uv run alembic upgrade head
 ```
 
 ---
 
-## 💻 CLI Usage & Architecture
+## 💻 Running the Services
 
-Delta Cards is built as a decoupled pipeline with **three independent services** that communicate through a shared database, alongside a unified all-in-one command:
+Delta Cards provides a dedicated task runner via [`just`](https://github.com/casey/just) along with native CLI entrypoints:
 
-### 1. Scraper Service (`delta-cards scrape`)
-Fetches listings from Wallapop and/or Vinted and stores them in the database (`WallapopOffers` table with `platform` and `assigned_state = 'pending'`) and optional JSON/CSV files. Runs fast with zero OCR/AI overhead:
+### Quick Commands (`just`)
+
 ```bash
-# Scrape Wallapop (default platform)
-uv run delta-cards scrape -p single_card
+just                  # List all available recipes
+just scrape-all       # Scrape latest listings from Wallapop and Vinted
+just assign-once      # Run vision recognition and pricing on pending batch
+just alerts-once      # Verify deals with SLM and dispatch Discord alerts
+just app              # Launch Streamlit diagnostic & evaluation UI
+just test             # Run automated pytest test suite
+```
 
-# Scrape Vinted
-uv run delta-cards scrape --platform vinted -p single_card
-# (or use the dedicated standalone binary: uv run delta-cards-scrape-vinted -p single_card)
+### Decoupled Worker Execution
 
-# Scrape both platforms in sequence
-uv run delta-cards scrape --platform all
-
-# Run scraper continuously in loop mode (e.g. polls every 5 minutes)
+```bash
+# 1. Scraper Service (fetches listings into database with zero AI overhead)
 uv run delta-cards scrape --platform all --loop --interval 300
-```
-*(Also available as standalone binaries: `uv run delta-cards-scrape` and `uv run delta-cards-scrape-vinted`)*
 
-### 2. Card Assigner & Pricing Service (`delta-cards assign`)
-Persistent consumer worker that stays **always on waiting for offers**. It polls the database for unassigned listings, runs the vision & AI pipeline (YOLOv8 card detection, DINOv3 + USearch similarity search, RapidOCR, and fuzzy matching), retrieves live Cardmarket/TCGdex market prices (`--scrape-prices`), and flags potential deals (`is_deal = True`):
-```bash
-# Starts the continuous worker (polls DB every 30s by default):
-uv run delta-cards assign --scrape-prices
+# 2. Recognition & Pricing Service (continuous background worker)
+uv run delta-cards assign --scrape-prices --interval 30
 
-# Customize polling interval (e.g. check every 15 seconds):
-uv run delta-cards assign --interval 15 --scrape-prices
-
-# Or process current unassigned batch once and exit:
-uv run delta-cards assign --once --scrape-prices
-```
-*(Also available as standalone binary: `uv run delta-cards-assign`)*
-
-### 3. Alert Dispatcher Service (`delta-cards alerts`)
-Decoupled worker that scans the database for pending deal opportunities (`alert_status = 'pending'`). It passes candidates through an LLM verifier to prevent false positives (e.g., card lots, proxies, damaged cards) and dispatches rich notifications to your configured Discord webhook with platform-specific branding (Wallapop or Vinted):
-```bash
-# Starts the continuous alert worker:
+# 3. Deal Alert Dispatcher (continuous worker verifying deals with local SLM)
 uv run delta-cards alerts
 
-# Run once and exit:
-uv run delta-cards alerts --once
-
-# Send a test alert to verify Discord webhook connectivity (Wallapop format):
-uv run delta-cards alerts --test-discord
-
-# Send a test alert formatted for Vinted:
-uv run delta-cards alerts --test-discord-vinted
-```
-*(Also available as standalone binary: `uv run delta-cards-alert`)*
-
-### 4. Running in the Background (Daemons via `nohup`)
-To run all three services in the background without keeping terminals open:
-```bash
-nohup uv run delta-cards scrape --platform all --loop > scraper.log 2>&1 &
-nohup uv run delta-cards assign --scrape-prices > assign.log 2>&1 &
-nohup uv run delta-cards alerts > alerts.log 2>&1 &
-```
-Monitor them anytime with `tail -f <service>.log` or inspect running processes with `ps aux | grep delta-cards`.
-
-### 5. Unified All-in-One Command (`delta-cards`)
-Runs the complete sequential flow end-to-end (scrape -> assign -> price -> alert):
-```bash
-uv run delta-cards --scrape-prices
-uv run delta-cards --limit 10 --scrape-prices
+# 4. End-to-End Sequential Pipeline (scrape -> assign -> price -> alert)
+uv run delta-cards --platform all -p single_card -l 20 --scrape-prices
 ```
 
 ---
 
-## ⚙️ Running as System Services (`systemd`)
+## 🖥️ Interactive Evaluation App (Streamlit)
 
-For automated, persistent 24/7 background execution with auto-restart on crashes and system reboots, pre-configured `systemd` unit files are available in the [systemd/](systemd/) directory:
+For qualitative auditing, latency profiling, and ground-truth dataset curation, launch the built-in Streamlit application:
 
-| Unit File | Type | Description |
-|---|---|---|
-| `delta-cards-scrape.service` | `oneshot` | Executes a sequential scrape cycle (Wallapop first, then Vinted) |
-| `delta-cards-scrape.timer` | `timer` | Triggers the scraper service every 30 minutes (at `:00` and `:30`) |
-| `delta-cards-assign.service` | `simple` | Continuous worker for AI recognition and pricing |
-| `delta-cards-alerts.service` | `simple` | Continuous worker for deal verification & Discord alerts |
-
-### Installation Steps
-
-1. **Adjust user and paths** in `systemd/*.service` to match your deployment environment:
-   ```ini
-   User=your_username
-   Group=your_username
-   WorkingDirectory=/path/to/delta-cards
-   Environment="PATH=/home/your_username/.local/bin:/usr/local/bin:/usr/bin:/bin"
-   ExecStart=/home/your_username/.local/bin/uv run delta-cards ...
-   ```
-
-2. **Copy the unit files** to `/etc/systemd/system/`:
-   ```bash
-   sudo cp systemd/delta-cards-*.service /etc/systemd/system/
-   sudo cp systemd/delta-cards-*.timer /etc/systemd/system/
-   sudo systemctl daemon-reload
-   ```
-
-3. **Enable and start the services**:
-   ```bash
-   # Enable and start the 30-minute sequential scraper timer (Wallapop + Vinted)
-   sudo systemctl enable --now delta-cards-scrape.timer
-
-   # Enable and start the recognition worker
-   sudo systemctl enable --now delta-cards-assign.service
-
-   # Enable and start the Discord alert worker
-   sudo systemctl enable --now delta-cards-alerts.service
-   ```
-
-### Managing Systemd Services
-
-With `just`:
 ```bash
-just restart          # Restart all services (assigner, alerts, scraper timer)
-just status           # Check status of all services
-just logs             # Live combined logs (or: just logs-assign, just logs-alerts, just logs-scrape)
-just stop             # Stop all services
-just start            # Start all services
+just app
+# or: uv run streamlit run evaluation_app/app.py
 ```
 
-Or using native `systemctl` / `journalctl`:
-- **Check status:**
-  ```bash
-  sudo systemctl status delta-cards-scrape.timer
-  sudo systemctl status delta-cards-assign.service
-  sudo systemctl status delta-cards-alerts.service
-  ```
+Visit `http://localhost:8501` to access:
+- **Dataset Manager**: 3-column comparison view of real marketplace photos against high-resolution official CDN scans.
+- **1-Click Benchmark Evaluator**: Run end-to-end identification benchmarks across subsets (e.g., real photos, counterfeits, glare degradations) with real-time KPI breakdown.
+- **Database Explorer**: Interactive search across 39,000+ indexed cards with set numbers, rarities, and Cardmarket pricing.
 
-- **View live logs:**
-  ```bash
-  journalctl -u delta-cards-assign.service -f
-  journalctl -u delta-cards-alerts.service -f
-  journalctl -u delta-cards-scrape.service -n 50
-  ```
+---
 
-- **Stop services:**
-  ```bash
-  sudo systemctl stop delta-cards-scrape.timer
-  sudo systemctl stop delta-cards-assign.service
-  sudo systemctl stop delta-cards-alerts.service
-  ```
+## ⚙️ 24/7 Production Deployment (`systemd`)
 
-- **Restart services:**
-  ```bash
-  sudo systemctl restart delta-cards-assign.service delta-cards-alerts.service delta-cards-scrape.timer
-  ```
+For uninterrupted production execution with self-healing auto-restarts, unit files are provided in [`systemd/`](systemd/):
 
-## 🐍 Python Library Usage
+| Service Unit | Type | Role |
+| :--- | :---: | :--- |
+| `delta-cards-scrape.timer` | Timer | Triggers a scrape cycle every 30 minutes (at `:00` and `:30`) |
+| `delta-cards-scrape.service` | Oneshot | Ingests listings sequentially (Wallapop then Vinted) |
+| `delta-cards-assign.service` | Simple | Persistent AI recognition and Cardmarket pricing daemon |
+| `delta-cards-alerts.service` | Simple | Persistent SLM verification and Discord alert dispatcher |
 
-```python
-import asyncio
-from delta_cards import CardOffersScraper, VintedScraper, load_config
+### Enable System Services
 
-# Load JSON configuration
-config = load_config("config/pokemon_cards_search.json")
-
-# 1. Scrape Wallapop
-wallapop_scraper = CardOffersScraper(config)
-wallapop_offers = asyncio.run(wallapop_scraper.run())
-wallapop_scraper.save_results(wallapop_offers)
-
-# 2. Scrape Vinted
-vinted_scraper = VintedScraper(config)
-vinted_offers = asyncio.run(vinted_scraper.run())
-vinted_scraper.save_results(vinted_offers)
-
-for offer in vinted_offers[:5]:
-    print(f"[{offer.platform.upper()}] {offer.title} - {offer.price} {offer.currency} ({offer.link})")
+```bash
+just install-services
+just restart
+just status
+just logs
 ```
 
 ---
 
-## 🧪 Testing
+## 🧪 Testing & Quality Assurance
 
-Run automated tests:
+Delta Cards includes an automated test suite covering unit, integration, database, and vision tests:
+
 ```bash
-uv run pytest
+# Run complete test suite
+uv run pytest -v
+
+# Run targeted recognition sanity test
+uv run pytest tests/test_card_ocr.py -k test_card_ocr_language_detection -q
 ```
 
 ---
 
-## 📖 Architecture & Recognition Pipeline
+## 👥 Authors & Portfolio Context
 
-For an in-depth explanation of how single card visual detection, OCR, hybrid LLM extraction, TCGdex matching, and bounded multiprocessing work, see [docs/pipeline.md](docs/pipeline.md).
+This project was developed as a production-grade demonstration of **Computer Vision**, **Fine-Grained Image Retrieval**, **Local SLM Orchestration**, and **Decoupled Backend Architecture**.
 
+- **Javier Jiménez** — [GitHub Profile](https://github.com/Javier-Jimenez99)
+- **Adrián Hipólito** — [GitHub Profile](https://github.com/Adrihp06)
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

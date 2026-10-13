@@ -84,5 +84,6 @@ echo -e "${BOLD}${GREEN} 🎉 ALL DONE! Delta Cards is fully installed and ready
 echo -e "${BOLD}${GREEN}==============================================================================${RESET}"
 echo -e "\nTry running:"
 echo -e "  • Quick evaluation benchmark on live samples: ${CYAN}uv run python scripts/evaluate.py --limit 2${RESET}"
-echo -e "  • Scrape & enrich cards into database:        ${CYAN}uv run python -m delta_cards.cli -p single_card -l 2${RESET}"
+echo -e "  • Scrape & enrich cards into database:        ${CYAN}uv run delta-cards -p single_card -l 2${RESET}"
 echo -e "  • Run full automated test suite:             ${CYAN}uv run pytest tests/ -v${RESET}\n"
+

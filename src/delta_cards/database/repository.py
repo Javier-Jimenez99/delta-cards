@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 from ..models import OfferListing
 from .connection import get_engine, get_session, init_db
-from .models import PlatformOffers, WallapopOffers, CardmarketProduct, CardmarketPrice, CardmarketOffers
+from .models import PlatformOffers, CardmarketProduct, CardmarketPrice, CardmarketOffers
 
 logger = logging.getLogger(__name__)
 

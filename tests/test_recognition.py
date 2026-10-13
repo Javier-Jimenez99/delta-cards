@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from delta_cards.recognition.card_ocr import CardOCR
+from delta_cards.recognition.card_ocr_cache import CandidateOCRCache
 from delta_cards.recognition.card_text_service import CardTextService
 from delta_cards.recognition.pipeline import CardRecognitionPipeline, process_card_listing
 from delta_cards.recognition.visual_detector import CardNotDetectedError, VisualCardDetector
@@ -70,11 +71,14 @@ class TestCardOCRComponent:
 
 
 class TestCardTextServiceComponent:
-    """Tests for CardTextService text retrieval and caching."""
+    """Tests for CandidateOCRCache (and backward-compatible CardTextService alias)."""
+
+    def test_alias_equivalence(self):
+        assert CardTextService is CandidateOCRCache
 
     @pytest.mark.asyncio
     async def test_service_reconstruction(self):
-        service = CardTextService()
+        service = CandidateOCRCache()
         data = await service.get_reconstructed_card("sv03-001", lang="es")
         assert data is not None
         assert "Oddish" in data["name"]
